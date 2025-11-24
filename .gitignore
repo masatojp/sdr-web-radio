@@ -1,0 +1,4 @@
+#オートスケルチデータベースファイルをgitから除外
+squelch_data.json
+#周波数ブックマークファイルをgitから除外
+bookmarks.json
