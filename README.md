@@ -26,7 +26,7 @@ Node.jsをバックエンドとして、リアルタイムのI/Qデータを処�
 
 1.  **リポジトリをクローン**
     ```bash
-    git clone <your-repository-url>
+    git clone https://github.com/masatojp/sdr-web-radio.git
     cd sdr-web-radio
     ```
 
