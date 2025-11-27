@@ -1,5 +1,6 @@
 const net = require('net');
 const http = require('http');
+const url = require('url');
 const WebSocket = require('ws');
 const fs = require('fs');
 const path = require('path');
@@ -19,7 +20,8 @@ const CONFIG = {
     // 目標とする音声レート
     audioRate: 16000,
     password: "admin",
-    squelchFile: path.join(__dirname, 'squelch_data.json')
+    squelchFile: path.join(__dirname, 'squelch_data.json'),
+    recordingsPath: path.join(__dirname, 'recordings')
 };
 
 // デシメーション比率と、実際の音声レートを計算
@@ -51,6 +53,11 @@ function saveSquelchDB() {
     fs.writeFile(CONFIG.squelchFile, JSON.stringify(squelchDB, null, 2), (err) => {
         if (err) console.error('[System] Save Error:', err);
     });
+}
+
+// 録音ディレクトリを作成
+if (!fs.existsSync(CONFIG.recordingsPath)) {
+    fs.mkdirSync(CONFIG.recordingsPath);
 }
 
 console.log(`[System] Starting Web SDR Monitor (Android Background Fix)...`);
@@ -361,6 +368,12 @@ const htmlContent = `
         </div>
 
         <div class="bm-header">
+            <div class="bm-label">RECORDINGS</div>
+            <button class="bm-add-btn" id="recBtn">REC</button>
+        </div>
+        <div id="recordingList" class="bookmark-list"></div>
+
+        <div class="bm-header">
             <div class="bm-label">BOOKMARKS</div>
             <div style="display:flex; gap:5px;">
                 <button class="bm-add-btn" onclick="openFolderModal('add')">+ FOLDER</button>
@@ -471,7 +484,9 @@ const htmlContent = `
             btnM10: document.getElementById('btnM10'),
             btnM1: document.getElementById('btnM1'),
             btnP1: document.getElementById('btnP1'),
-            btnP10: document.getElementById('btnP10')
+            btnP10: document.getElementById('btnP10'),
+            recBtn: document.getElementById('recBtn'),
+            recordingList: document.getElementById('recordingList')
         };
 
         // Android判定 & ガイド表示ロジック
@@ -502,7 +517,8 @@ const htmlContent = `
             lastSignalTime: 0,
             isSquelchOpen: false,
             pendingFreq: 0,
-            audioRate: 16000
+            audioRate: 16000,
+            isRecording: false
         };
 
         // Androidはバッファ枯渇に敏感なので少し長めに
@@ -799,7 +815,11 @@ const htmlContent = `
                     alert(pl.msg);
                     if (state.masterGain) state.masterGain.gain.value = 1.0;
                 } else if (pl.type === 'bookmarks') {
-                    renderBookmarks(pl.data);
+                    allBookmarks = pl.data || [];
+                    renderBookmarks();
+                } else if (pl.type === 'recordings') {
+                    state.recordings = pl.data || [];
+                    renderRecordings();
                 }
             }
         };
@@ -890,18 +910,6 @@ const htmlContent = `
                     state.nextTime = state.audioCtx.currentTime;
                 }
             }
-        }
-
-        function renderBookmarks(list) {
-            const container = document.getElementById('bookmarkList');
-            container.innerHTML = '';
-            if (!list || list.length === 0) {
-                container.style.display = 'none';
-                return;
-            }
-            container.style.display = 'block';
-            const tree = buildTree(list);
-            renderTree(tree, container);
         }
 
         let currentBmId = null;
@@ -1033,11 +1041,10 @@ const htmlContent = `
             }
         };
 
-        renderBookmarks = (list) => {
-            allBookmarks = list || [];
+        function renderBookmarks() {
             const container = document.getElementById('bookmarkList');
             container.innerHTML = '';
-            if (!list || list.length === 0) {
+            if (!allBookmarks || allBookmarks.length === 0) {
                 container.style.display = 'none';
                 return;
             }
@@ -1045,7 +1052,7 @@ const htmlContent = `
 
             const tree = buildTree(allBookmarks);
             renderTree(tree, container);
-        };
+        }
 
         function buildTree(items) {
             const map = {};
@@ -1084,7 +1091,7 @@ const htmlContent = `
                     header.onclick = () => {
                         if (expandedFolders.has(node.id)) expandedFolders.delete(node.id);
                         else expandedFolders.add(node.id);
-                        renderBookmarks(allBookmarks);
+                        renderBookmarks();
                     };
 
                     const childrenDiv = document.createElement('div');
@@ -1116,14 +1123,83 @@ const htmlContent = `
                 }
             });
         }
+
+        // Recording UI
+        els.recBtn.addEventListener('click', () => {
+            state.isRecording = !state.isRecording;
+            if (state.isRecording) {
+                worker.postMessage({ type: 'command', payload: { type: 'start_recording' } });
+                els.recBtn.style.background = '#c62828';
+                els.recBtn.style.boxShadow = '0 0 8px #c62828';
+                els.recBtn.innerText = 'STOP REC';
+            } else {
+                worker.postMessage({ type: 'command', payload: { type: 'stop_recording' } });
+                els.recBtn.style.background = '#00897b';
+                els.recBtn.style.boxShadow = 'none';
+                els.recBtn.innerText = 'REC';
+            }
+        });
+
+        function renderRecordings() {
+            const container = els.recordingList;
+            container.innerHTML = '';
+            if (!state.recordings || state.recordings.length === 0) {
+                container.style.display = 'none';
+                return;
+            }
+            container.style.display = 'block';
+
+            state.recordings.forEach(rec => {
+                const div = document.createElement('div');
+                div.className = 'bookmark-item';
+                div.innerHTML = `
+                    <div style="flex:1">
+                        <div class="bm-title">${rec.name}</div>
+                        <div class="bm-info">${(rec.size / 1024 / 1024).toFixed(2)} MB</div>
+                    </div>
+                    <div class="bm-actions">
+                        <a href="/download/${rec.name}" download class="bm-btn bm-edit" style="text-decoration:none; background:#00897b;">DL</a>
+                        <button class="bm-btn bm-del" onclick="deleteRecording('${rec.name}')">DEL</button>
+                    </div>
+                `;
+                container.appendChild(div);
+            });
+        }
+
+        window.deleteRecording = (filename) => {
+            if (confirm(`Delete ${filename}?`)) {
+                worker.postMessage({ type: 'command', payload: { type: 'delete_recording', filename: filename } });
+            }
+        };
     </script>
 </body>
 </html>
 `;
 
 const server = http.createServer((req, res) => {
-    res.writeHead(200, { 'Content-Type': 'text/html' });
-    res.end(htmlContent);
+    const reqUrl = url.parse(req.url);
+    const pathname = reqUrl.pathname;
+
+    if (pathname.startsWith('/download/')) {
+        const filename = path.basename(decodeURIComponent(pathname));
+        const filePath = path.join(CONFIG.recordingsPath, filename);
+        if (fs.existsSync(filePath)) {
+            res.writeHead(200, {
+                'Content-Type': 'audio/wav',
+                'Content-Disposition': `attachment; filename="${filename}"`
+            });
+            fs.createReadStream(filePath).pipe(res);
+        } else {
+            res.writeHead(404);
+            res.end('File not found');
+        }
+    } else if (pathname === '/') {
+        res.writeHead(200, { 'Content-Type': 'text/html' });
+        res.end(htmlContent);
+    } else {
+        res.writeHead(404);
+        res.end('Not Found');
+    }
 });
 
 const wss = new WebSocket.Server({ server });
@@ -1135,6 +1211,10 @@ let rtlSocket = null;
 let currentFreq = CONFIG.frequency;
 let currentMode = CONFIG.mode;
 let isTuning = false;
+
+// Recording State
+let isRecording = false;
+let recordingStream = null;
 
 // DSP State
 let bufferRemainder = Buffer.alloc(0);
@@ -1283,11 +1363,28 @@ function broadcastStatus() {
     wss.clients.forEach(c => { if (c.readyState === WebSocket.OPEN) c.send(msg); });
 }
 
+function getRecordings() {
+    try {
+        const files = fs.readdirSync(CONFIG.recordingsPath)
+            .filter(f => f.endsWith('.wav'))
+            .map(f => ({ name: f, size: fs.statSync(path.join(CONFIG.recordingsPath, f)).size }))
+            .sort((a, b) => b.name.localeCompare(a.name));
+        return files;
+    } catch (e) {
+        return [];
+    }
+}
+
 function saveBookmarks() {
     fs.writeFile(bookmarksFile, JSON.stringify(bookmarks, null, 2), (err) => {
         if (err) console.error('[System] Bookmark Save Error:', err);
     });
     const msg = JSON.stringify({ type: 'bookmarks', data: bookmarks });
+    wss.clients.forEach(c => { if (c.readyState === WebSocket.OPEN) c.send(msg); });
+}
+
+function broadcastRecordings() {
+    const msg = JSON.stringify({ type: 'recordings', data: getRecordings() });
     wss.clients.forEach(c => { if (c.readyState === WebSocket.OPEN) c.send(msg); });
 }
 
@@ -1300,6 +1397,7 @@ wss.on('connection', (ws) => {
         audioRate: ACTUAL_AUDIO_RATE
     }));
     ws.send(JSON.stringify({ type: 'bookmarks', data: bookmarks }));
+    broadcastRecordings();
     ws.on('message', (msg) => {
         try {
             const strMsg = msg.toString();
@@ -1343,12 +1441,86 @@ wss.on('connection', (ws) => {
                 }
                 bookmarks = bookmarks.filter(b => !idsToDelete.has(b.id));
                 saveBookmarks();
+            } else if (cmd.type === 'start_recording') {
+                startRecording();
+            } else if (cmd.type === 'stop_recording') {
+                stopRecording();
+                broadcastRecordings();
+            } else if (cmd.type === 'delete_recording') {
+                if (cmd.filename) {
+                    const filePath = path.join(CONFIG.recordingsPath, cmd.filename);
+                    if (fs.existsSync(filePath)) {
+                        fs.unlinkSync(filePath);
+                        console.log(`[Recording] Deleted: ${cmd.filename}`);
+                    }
+                }
+                broadcastRecordings();
             }
         } catch (e) {
             console.error('[System] WS Message Error:', e);
         }
     });
 });
+
+function getFormattedTimestamp() {
+    const d = new Date();
+    const YYYY = d.getFullYear();
+    const MM = (d.getMonth() + 1).toString().padStart(2, '0');
+    const DD = d.getDate().toString().padStart(2, '0');
+    const hh = d.getHours().toString().padStart(2, '0');
+    const mm = d.getMinutes().toString().padStart(2, '0');
+    const ss = d.getSeconds().toString().padStart(2, '0');
+    return `${YYYY}${MM}${DD}_${hh}${mm}${ss}`;
+}
+
+function createWavHeader(sampleRate, numChannels, bitsPerSample, dataSize) {
+    const blockAlign = numChannels * (bitsPerSample / 8);
+    const byteRate = sampleRate * blockAlign;
+    const buffer = Buffer.alloc(44);
+
+    buffer.write('RIFF', 0);
+    buffer.writeUInt32LE(36 + dataSize, 4);
+    buffer.write('WAVE', 8);
+    buffer.write('fmt ', 12);
+    buffer.writeUInt32LE(16, 16); // Sub-chunk size
+    buffer.writeUInt16LE(1, 20); // PCM
+    buffer.writeUInt16LE(numChannels, 22);
+    buffer.writeUInt32LE(sampleRate, 24);
+    buffer.writeUInt32LE(byteRate, 28);
+    buffer.writeUInt16LE(blockAlign, 32);
+    buffer.writeUInt16LE(bitsPerSample, 34);
+    buffer.write('data', 36);
+    buffer.writeUInt32LE(dataSize, 40);
+
+    return buffer;
+}
+
+function startRecording() {
+    if (isRecording) return;
+    isRecording = true;
+    const filename = `${currentMode}_${currentFreq}_${getFormattedTimestamp()}.wav`;
+    const filePath = path.join(CONFIG.recordingsPath, filename);
+    recordingStream = fs.createWriteStream(filePath);
+    // Write a placeholder WAV header, will be overwritten on stop
+    recordingStream.write(createWavHeader(ACTUAL_AUDIO_RATE, 1, 16, 0));
+    console.log(`[Recording] Started: ${filename}`);
+}
+
+function stopRecording() {
+    if (!isRecording || !recordingStream) return;
+    isRecording = false;
+    const stream = recordingStream;
+    recordingStream = null;
+    stream.end(() => {
+        const stats = fs.statSync(stream.path);
+        const dataSize = stats.size - 44;
+        const header = createWavHeader(ACTUAL_AUDIO_RATE, 1, 16, dataSize);
+        const fd = fs.openSync(stream.path, 'r+');
+        fs.writeSync(fd, header, 0, 44, 0);
+        fs.closeSync(fd);
+        console.log(`[Recording] Stopped: ${path.basename(stream.path)}`);
+    });
+}
 
 function connectToRtlTcp() {
     rtlSocket = new net.Socket();
@@ -1481,6 +1653,11 @@ function connectToRtlTcp() {
             // 音声データを格納
             for(let i=0; i<audioSamples.length; i++) {
                 int16Buffer[i+1] = Math.floor(audioSamples[i] * 32767);
+            }
+
+            if (isRecording && recordingStream) {
+                const audioDataBuffer = Buffer.from(int16Buffer.buffer, int16Buffer.byteOffset + 2, int16Buffer.byteLength - 2);
+                recordingStream.write(audioDataBuffer);
             }
 
             wss.clients.forEach(c => { if (c.readyState === WebSocket.OPEN) c.send(int16Buffer.buffer); });
