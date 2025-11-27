@@ -3,7 +3,7 @@ const http = require('http');
 const url = require('url');
 const WebSocket = require('ws');
 const fs = require('fs');
-const flac = require('flac-bindings');
+// const flac = require('flac-bindings'); // Replaced with dynamic import
 const path = require('path');
 
 // ==========================================
@@ -1474,21 +1474,29 @@ function getFormattedTimestamp() {
     return `${YYYY}${MM}${DD}_${hh}${mm}${ss}`;
 }
 
-function startRecording() {
+async function startRecording() {
     if (isRecording) return;
     isRecording = true;
     const filename = `${currentMode}_${currentFreq}_${getFormattedTimestamp()}.flac`;
     const filePath = path.join(CONFIG.recordingsPath, filename);
 
-    const fileStream = fs.createWriteStream(filePath);
-    recordingStream = new flac.StreamEncoder({
-        sampleRate: Math.round(ACTUAL_AUDIO_RATE),
-        channels: 1,
-        bitsPerSample: 16
-    });
-    recordingStream.pipe(fileStream);
+    try {
+        const flacModule = await import('flac-bindings');
+        const StreamEncoder = flacModule.StreamEncoder || flacModule.default.StreamEncoder;
 
-    console.log(`[Recording] Started: ${filename}`);
+        const fileStream = fs.createWriteStream(filePath);
+        recordingStream = new StreamEncoder({
+            sampleRate: Math.round(ACTUAL_AUDIO_RATE),
+            channels: 1,
+            bitsPerSample: 16
+        });
+        recordingStream.pipe(fileStream);
+
+        console.log(`[Recording] Started: ${filename}`);
+    } catch (err) {
+        console.error('[Recording] Failed to start:', err);
+        isRecording = false;
+    }
 }
 
 function stopRecording() {
@@ -1496,7 +1504,7 @@ function stopRecording() {
     isRecording = false;
     const filename = path.basename(recordingStream.path);
     recordingStream = null;
-    console.log(`[Recording] Stopped: ${filename}`);
+    console.log(`[Recording] Stopped: ${filename} `);
 }
 
 function connectToRtlTcp() {
