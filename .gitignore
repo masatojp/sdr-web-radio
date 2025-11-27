@@ -2,3 +2,5 @@
 squelch_data.json
 #周波数ブックマークファイルをgitから除外
 bookmarks.json
+#録音データフォルダをgitから除外
+recordings/
