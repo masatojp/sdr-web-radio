@@ -1080,15 +1080,15 @@ const htmlContent = `
 
                     const header = document.createElement('div');
                     header.className = 'bm-folder-header';
-                    header.innerHTML = `
-    < div class="bm-folder-title" >
-        <span class="bm-icon ${isOpen ? 'open' : ''}">${iconChar}</span> ${ node.title }
-                        </div >
-    <div class="bm-actions">
-        <button class="bm-btn bm-edit" onclick="event.stopPropagation(); openFolderModal('edit', '${node.id}')">EDIT</button>
-        <button class="bm-btn bm-del" onclick="event.stopPropagation(); deleteBm('${node.id}')">DEL</button>
-    </div>
-`;
+                    header.innerHTML = \`
+                        <div class="bm-folder-title">
+                            <span class="bm-icon \${isOpen ? 'open' : ''}">\${iconChar}</span> \${node.title}
+                        </div>
+                        <div class="bm-actions">
+                            <button class="bm-btn bm-edit" onclick="event.stopPropagation(); openFolderModal('edit', '\${node.id}')">EDIT</button>
+                            <button class="bm-btn bm-del" onclick="event.stopPropagation(); deleteBm('\${node.id}')">DEL</button>
+                        </div>
+                    \`;
                     header.onclick = () => {
                         if (expandedFolders.has(node.id)) expandedFolders.delete(node.id);
                         else expandedFolders.add(node.id);
@@ -1096,7 +1096,7 @@ const htmlContent = `
                     };
 
                     const childrenDiv = document.createElement('div');
-                    childrenDiv.className = `bm - children ${ isOpen ? 'open' : '' } `;
+                    childrenDiv.className = \`bm-children \${isOpen ? 'open' : ''}\`;
 
                     folderDiv.appendChild(header);
                     folderDiv.appendChild(childrenDiv);
@@ -1106,16 +1106,16 @@ const htmlContent = `
                 } else {
                     const div = document.createElement('div');
                     div.className = 'bookmark-item';
-                    div.innerHTML = `
-    < div style = "flex:1" >
-                            <div class="bm-title">${node.title}</div>
-                            <div class="bm-info">${node.freq.toFixed(1)} MHz (${node.mode})</div>
-                        </div >
-    <div class="bm-actions">
-        <button class="bm-btn bm-edit" onclick="event.stopPropagation(); openBmModal('edit', '${node.id}')">EDIT</button>
-        <button class="bm-btn bm-del" onclick="event.stopPropagation(); deleteBm('${node.id}')">DEL</button>
-    </div>
-`;
+                    div.innerHTML = \`
+                        <div style="flex:1">
+                            <div class="bm-title">\${node.title}</div>
+                            <div class="bm-info">\${node.freq.toFixed(1)} MHz (\${node.mode})</div>
+                        </div>
+                        <div class="bm-actions">
+                            <button class="bm-btn bm-edit" onclick="event.stopPropagation(); openBmModal('edit', '\${node.id}')">EDIT</button>
+                            <button class="bm-btn bm-del" onclick="event.stopPropagation(); deleteBm('\${node.id}')">DEL</button>
+                        </div>
+                    \`;
                     div.onclick = () => {
                         els.newFreq.value = node.freq;
                         setModeUI(node.mode);
@@ -1153,22 +1153,22 @@ const htmlContent = `
             state.recordings.forEach(rec => {
                 const div = document.createElement('div');
                 div.className = 'bookmark-item';
-                div.innerHTML = `
-    < div style = "flex:1" >
-                        <div class="bm-title">${rec.name}</div>
-                        <div class="bm-info">${(rec.size / 1024 / 1024).toFixed(2)} MB</div>
-                    </div >
-    <div class="bm-actions">
-        <a href="/download/${rec.name}" download class="bm-btn bm-edit" style="text-decoration:none; background:#00897b;">DL</a>
-        <button class="bm-btn bm-del" onclick="deleteRecording('${rec.name}')">DEL</button>
-    </div>
-`;
+                div.innerHTML = \`
+                    <div style="flex:1">
+                        <div class="bm-title">\${rec.name}</div>
+                        <div class="bm-info">\${(rec.size / 1024 / 1024).toFixed(2)} MB</div>
+                    </div>
+                    <div class="bm-actions">
+                        <a href="/download/\${rec.name}" download class="bm-btn bm-edit" style="text-decoration:none; background:#00897b;">DL</a>
+                        <button class="bm-btn bm-del" onclick="deleteRecording('\${rec.name}')">DEL</button>
+                    </div>
+                \`;
                 container.appendChild(div);
             });
         }
 
         window.deleteRecording = (filename) => {
-            if (confirm(`Delete ${ filename }?`)) {
+            if (confirm(\`Delete \${filename}?\`)) {
                 worker.postMessage({ type: 'command', payload: { type: 'delete_recording', filename: filename } });
             }
         };
