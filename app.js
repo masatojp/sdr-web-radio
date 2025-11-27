@@ -369,12 +369,6 @@ const htmlContent = `
         </div>
 
         <div class="bm-header">
-            <div class="bm-label">RECORDINGS</div>
-            <button class="bm-add-btn" id="recBtn">REC</button>
-        </div>
-        <div id="recordingList" class="bookmark-list"></div>
-
-        <div class="bm-header">
             <div class="bm-label">BOOKMARKS</div>
             <div style="display:flex; gap:5px;">
                 <button class="bm-add-btn" onclick="openFolderModal('add')">+ FOLDER</button>
@@ -382,6 +376,12 @@ const htmlContent = `
             </div>
         </div>
         <div id="bookmarkList" class="bookmark-list"></div>
+
+        <div class="bm-header">
+            <div class="bm-label">RECORDINGS</div>
+            <button class="bm-add-btn" id="recBtn">REC</button>
+        </div>
+        <div id="recordingList" class="bookmark-list"></div>
 
         <!-- 重要: controls属性をつけてユーザー操作を可能にする。playsinlineは必須 -->
         <audio id="mainAudio" playsinline controls></audio>
