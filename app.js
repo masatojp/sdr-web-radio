@@ -802,6 +802,12 @@ const htmlContent = `
                         console.log('Synced Audio Rate:', pl.audioRate);
                         state.audioRate = pl.audioRate;
                     }
+                    
+                    // ADDED: 録音ステータスの同期
+                    if (typeof pl.isRecording !== 'undefined') {
+                        state.isRecording = pl.isRecording;
+                        updateRecButton();
+                    }
 
                     setModeUI(pl.mode);
                     updateMediaSession(state.currentFreqMHz, pl.mode);
@@ -1124,20 +1130,28 @@ const htmlContent = `
                 }
             });
         }
-
-        // Recording UI
-        els.recBtn.addEventListener('click', () => {
-            state.isRecording = !state.isRecording;
+        
+        // ADDED: 録音ボタンの表示更新関数
+        function updateRecButton() {
             if (state.isRecording) {
-                worker.postMessage({ type: 'command', payload: { type: 'start_recording' } });
                 els.recBtn.style.background = '#c62828';
                 els.recBtn.style.boxShadow = '0 0 8px #c62828';
                 els.recBtn.innerText = 'STOP REC';
             } else {
-                worker.postMessage({ type: 'command', payload: { type: 'stop_recording' } });
                 els.recBtn.style.background = '#00897b';
                 els.recBtn.style.boxShadow = 'none';
                 els.recBtn.innerText = 'REC';
+            }
+        }
+
+        // Recording UI
+        els.recBtn.addEventListener('click', () => {
+            // クライアント側でstateを反転させるのではなく、サーバーへコマンドを送るだけにする
+            // 実際のUI更新はサーバーからのstatus_updateを待つ
+            if (!state.isRecording) {
+                worker.postMessage({ type: 'command', payload: { type: 'start_recording' } });
+            } else {
+                worker.postMessage({ type: 'command', payload: { type: 'stop_recording' } });
             }
         });
 
@@ -1360,7 +1374,8 @@ function broadcastStatus() {
         mode: currentMode,
         bwInfo: bwText,
         savedNoiseFloor: savedFloor,
-        audioRate: ACTUAL_AUDIO_RATE
+        audioRate: ACTUAL_AUDIO_RATE,
+        isRecording: isRecording // ADDED: 現在の録音状態を送信
     });
     wss.clients.forEach(c => { if (c.readyState === WebSocket.OPEN) c.send(msg); });
 }
@@ -1396,7 +1411,8 @@ wss.on('connection', (ws) => {
         type: 'status_update',
         freq: currentFreq,
         mode: currentMode,
-        audioRate: ACTUAL_AUDIO_RATE
+        audioRate: ACTUAL_AUDIO_RATE,
+        isRecording: isRecording // ADDED: 接続時にも録音状態を送信
     }));
     ws.send(JSON.stringify({ type: 'bookmarks', data: bookmarks }));
     broadcastRecordings();
@@ -1497,6 +1513,7 @@ async function startRecording() {
         recordingStream.pipe(fileStream);
 
         console.log(`[Recording] Started: ${filename}`);
+        broadcastStatus(); // ADDED: 全クライアントに録音開始を通知
     } catch (err) {
         console.error('[Recording] Failed to start:', err);
         isRecording = false;
@@ -1507,16 +1524,17 @@ async function startRecording() {
 function stopRecording() {
     if (!isRecording || !recordingStream) return;
     isRecording = false;
-
+    
     // MODIFIED: recordingStream.path ではなく保存した変数を使用
     const filename = currentRecordingFilename;
-
+    
     // ストリームを正しく終了させる
     recordingStream.end();
     recordingStream = null;
     currentRecordingFilename = "";
 
     console.log(`[Recording] Stopped: ${filename} `);
+    broadcastStatus(); // ADDED: 全クライアントに録音停止を通知
 }
 
 function connectToRtlTcp() {
