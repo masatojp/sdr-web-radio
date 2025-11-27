@@ -34,6 +34,7 @@ Node.jsをバックエンドとして、リアルタイムのI/Qデータを処�
     このプロジェクトは `ws` (WebSocketライブラリ) に依存しています。
     ```bash
     npm install ws
+    npm install flac-bindings
     ```
 
 3.  **設定ファイルを編集**

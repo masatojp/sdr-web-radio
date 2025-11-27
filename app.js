@@ -3,6 +3,7 @@ const http = require('http');
 const url = require('url');
 const WebSocket = require('ws');
 const fs = require('fs');
+const flac = require('flac-bindings');
 const path = require('path');
 
 // ==========================================
@@ -1181,7 +1182,7 @@ const server = http.createServer((req, res) => {
     const pathname = reqUrl.pathname;
 
     if (pathname.startsWith('/download/')) {
-        const filename = path.basename(decodeURIComponent(pathname));
+        const filename = path.basename(decodeURIComponent(pathname)).replace(/\.\.+/g, '.');
         const filePath = path.join(CONFIG.recordingsPath, filename);
         if (fs.existsSync(filePath)) {
             res.writeHead(200, {
@@ -1366,7 +1367,7 @@ function broadcastStatus() {
 function getRecordings() {
     try {
         const files = fs.readdirSync(CONFIG.recordingsPath)
-            .filter(f => f.endsWith('.wav'))
+            .filter(f => f.endsWith('.flac'))
             .map(f => ({ name: f, size: fs.statSync(path.join(CONFIG.recordingsPath, f)).size }))
             .sort((a, b) => b.name.localeCompare(a.name));
         return files;
@@ -1473,53 +1474,29 @@ function getFormattedTimestamp() {
     return `${YYYY}${MM}${DD}_${hh}${mm}${ss}`;
 }
 
-function createWavHeader(sampleRate, numChannels, bitsPerSample, dataSize) {
-    const blockAlign = numChannels * (bitsPerSample / 8);
-    const byteRate = sampleRate * blockAlign;
-    const buffer = Buffer.alloc(44);
-
-    buffer.write('RIFF', 0);
-    buffer.writeUInt32LE(36 + dataSize, 4);
-    buffer.write('WAVE', 8);
-    buffer.write('fmt ', 12);
-    buffer.writeUInt32LE(16, 16); // Sub-chunk size
-    buffer.writeUInt16LE(1, 20); // PCM
-    buffer.writeUInt16LE(numChannels, 22);
-    buffer.writeUInt32LE(sampleRate, 24);
-    buffer.writeUInt32LE(byteRate, 28);
-    buffer.writeUInt16LE(blockAlign, 32);
-    buffer.writeUInt16LE(bitsPerSample, 34);
-    buffer.write('data', 36);
-    buffer.writeUInt32LE(dataSize, 40);
-
-    return buffer;
-}
-
 function startRecording() {
     if (isRecording) return;
     isRecording = true;
-    const filename = `${currentMode}_${currentFreq}_${getFormattedTimestamp()}.wav`;
+    const filename = `${currentMode}_${currentFreq}_${getFormattedTimestamp()}.flac`;
     const filePath = path.join(CONFIG.recordingsPath, filename);
-    recordingStream = fs.createWriteStream(filePath);
-    // Write a placeholder WAV header, will be overwritten on stop
-    recordingStream.write(createWavHeader(ACTUAL_AUDIO_RATE, 1, 16, 0));
+
+    const fileStream = fs.createWriteStream(filePath);
+    recordingStream = new flac.StreamEncoder({
+        sampleRate: Math.round(ACTUAL_AUDIO_RATE),
+        channels: 1,
+        bitsPerSample: 16
+    });
+    recordingStream.pipe(fileStream);
+
     console.log(`[Recording] Started: ${filename}`);
 }
 
 function stopRecording() {
     if (!isRecording || !recordingStream) return;
     isRecording = false;
-    const stream = recordingStream;
+    const filename = path.basename(recordingStream.path);
     recordingStream = null;
-    stream.end(() => {
-        const stats = fs.statSync(stream.path);
-        const dataSize = stats.size - 44;
-        const header = createWavHeader(ACTUAL_AUDIO_RATE, 1, 16, dataSize);
-        const fd = fs.openSync(stream.path, 'r+');
-        fs.writeSync(fd, header, 0, 44, 0);
-        fs.closeSync(fd);
-        console.log(`[Recording] Stopped: ${path.basename(stream.path)}`);
-    });
+    console.log(`[Recording] Stopped: ${filename}`);
 }
 
 function connectToRtlTcp() {
