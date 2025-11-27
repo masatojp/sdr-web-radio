@@ -1153,22 +1153,22 @@ const htmlContent = `
             state.recordings.forEach(rec => {
                 const div = document.createElement('div');
                 div.className = 'bookmark-item';
-                div.innerHTML = `
+                div.innerHTML = \`
                     <div style="flex:1">
-                        <div class="bm-title">${rec.name}</div>
-                        <div class="bm-info">${(rec.size / 1024 / 1024).toFixed(2)} MB</div>
+                        <div class="bm-title">\${rec.name}</div>
+                        <div class="bm-info">\${(rec.size / 1024 / 1024).toFixed(2)} MB</div>
                     </div>
                     <div class="bm-actions">
-                        <a href="/download/${rec.name}" download class="bm-btn bm-edit" style="text-decoration:none; background:#00897b;">DL</a>
-                        <button class="bm-btn bm-del" onclick="deleteRecording('${rec.name}')">DEL</button>
+                        <a href="/download/\${rec.name}" download class="bm-btn bm-edit" style="text-decoration:none; background:#00897b;">DL</a>
+                        <button class="bm-btn bm-del" onclick="deleteRecording('\${rec.name}')">DEL</button>
                     </div>
-                `;
+                \`;
                 container.appendChild(div);
             });
         }
 
         window.deleteRecording = (filename) => {
-            if (confirm(`Delete ${filename}?`)) {
+            if (confirm(\`Delete \${filename}?\`)) {
                 worker.postMessage({ type: 'command', payload: { type: 'delete_recording', filename: filename } });
             }
         };
@@ -1271,7 +1271,7 @@ class Biquad {
 class CascadeBiquad {
     constructor(fs, fc, q, stages = 2) {
         this.stages = [];
-        for(let i=0; i<stages; i++) {
+        for (let i = 0; i < stages; i++) {
             this.stages.push(new Biquad(fs, fc, q));
         }
     }
@@ -1280,7 +1280,7 @@ class CascadeBiquad {
     }
     process(input) {
         let out = input;
-        for(let s of this.stages) out = s.process(out);
+        for (let s of this.stages) out = s.process(out);
         return out;
     }
     reset() {
@@ -1628,8 +1628,8 @@ function connectToRtlTcp() {
             int16Buffer[0] = Math.floor(rssiPercent * 100);
 
             // 音声データを格納
-            for(let i=0; i<audioSamples.length; i++) {
-                int16Buffer[i+1] = Math.floor(audioSamples[i] * 32767);
+            for (let i = 0; i < audioSamples.length; i++) {
+                int16Buffer[i + 1] = Math.floor(audioSamples[i] * 32767);
             }
 
             if (isRecording && recordingStream) {
