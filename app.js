@@ -315,6 +315,15 @@ const htmlContent = `
         .bm-icon.open { transform: rotate(90deg); }
     </style>
 </head>
+<style>
+    .att-switch { display: flex; background: #222; border-radius: 8px; padding: 4px; margin-top: 15px; }
+    .att-opt {
+        flex: 1; padding: 6px; text-align: center; cursor: pointer;
+        border-radius: 6px; font-size: 0.8rem; color: #666; transition: 0.2s; font-weight: bold;
+    }
+    .att-opt.active { background: #ff9800; color: #000; }
+</style>
+
 <body>
     <div class="container">
         <div style="font-size:0.8rem; color:#666; margin-bottom:10px;" id="statusText">Ready</div>
@@ -352,6 +361,13 @@ const htmlContent = `
                 <button class="adj-btn" id="btnP1">+1</button>
                 <button class="adj-btn" id="btnP10">+10</button>
             </div>
+
+            <div class="att-switch">
+                <div class="att-opt" id="attOff" onclick="setAtt('off')">ATT OFF</div>
+                <div class="att-opt" id="attWeak" onclick="setAtt('weak')">WEAK</div>
+                <div class="att-opt" id="attStrong" onclick="setAtt('strong')">STRONG</div>
+            </div>
+
         </div>
 
         <button id="playBtn">START MONITOR</button>
@@ -489,6 +505,9 @@ const htmlContent = `
             recBtn: document.getElementById('recBtn'),
             recordingList: document.getElementById('recordingList')
         };
+        els.attOff = document.getElementById('attOff');
+        els.attWeak = document.getElementById('attWeak');
+        els.attStrong = document.getElementById('attStrong');
 
         // Android判定 & ガイド表示ロジック
         const isAndroid = /Android/i.test(navigator.userAgent);
@@ -521,6 +540,7 @@ const htmlContent = `
             audioRate: 16000,
             isRecording: false
         };
+        let currentAtt = 'off';
 
         // Androidはバッファ枯渇に敏感なので少し長めに
         const HOLD_TIME = 0.8;
@@ -564,6 +584,28 @@ const htmlContent = `
             state.sqMargin = parseInt(e.target.value);
             updateSqUI();
         });
+
+        window.setAtt = (att) => {
+            currentAtt = att;
+            updateAttUI();
+            worker.postMessage({
+                type: 'command',
+                payload: { type: 'set_att', att: currentAtt }
+            });
+        };
+
+        function updateAttUI() {
+            els.attOff.classList.remove('active');
+            els.attWeak.classList.remove('active');
+            els.attStrong.classList.remove('active');
+            if (currentAtt === 'off') {
+                els.attOff.classList.add('active');
+            } else if (currentAtt === 'weak') {
+                els.attWeak.classList.add('active');
+            } else if (currentAtt === 'strong') {
+                els.attStrong.classList.add('active');
+            }
+        }
 
         // ==========================================
         // Android Background Fix Implementation
@@ -807,6 +849,12 @@ const htmlContent = `
                     if (typeof pl.isRecording !== 'undefined') {
                         state.isRecording = pl.isRecording;
                         updateRecButton();
+                    }
+                    
+                    // ADDED: ATTステータスの同期
+                    if (pl.att && currentAtt !== pl.att) {
+                        currentAtt = pl.att;
+                        updateAttUI();
                     }
 
                     setModeUI(pl.mode);
@@ -1225,6 +1273,7 @@ const wss = new WebSocket.Server({ server });
 let rtlSocket = null;
 let currentFreq = CONFIG.frequency;
 let currentMode = CONFIG.mode;
+let currentAtt = 'off'; // 'off', 'weak', 'strong'
 let isTuning = false;
 
 // Recording State
@@ -1360,6 +1409,22 @@ function tuneRadio(freq, mode) {
     setTimeout(() => { isTuning = false; }, 800);
 }
 
+function setAttenuator(att) {
+    currentAtt = att;
+    console.log(`[DSP] Set Attenuator to: ${att}`);
+    if (att === 'off') {
+        sendCmd(0x08, 1); // AGC On
+    } else {
+        sendCmd(0x08, 0); // AGC Off
+        if (att === 'weak') {
+            sendCmd(0x04, -100); // -10dB
+        } else if (att === 'strong') {
+            sendCmd(0x04, -200); // -20dB
+        }
+    }
+    broadcastStatus();
+}
+
 function broadcastStatus() {
     const bwText = (currentMode === 'FM') ? "Wide (100kHz)" : "Sharp (5kHz)";
 
@@ -1375,7 +1440,8 @@ function broadcastStatus() {
         bwInfo: bwText,
         savedNoiseFloor: savedFloor,
         audioRate: ACTUAL_AUDIO_RATE,
-        isRecording: isRecording // ADDED: 現在の録音状態を送信
+        isRecording: isRecording, // ADDED: 現在の録音状態を送信
+        att: currentAtt // ADDED: 現在のATT設定を送信
     });
     wss.clients.forEach(c => { if (c.readyState === WebSocket.OPEN) c.send(msg); });
 }
@@ -1412,7 +1478,8 @@ wss.on('connection', (ws) => {
         freq: currentFreq,
         mode: currentMode,
         audioRate: ACTUAL_AUDIO_RATE,
-        isRecording: isRecording // ADDED: 接続時にも録音状態を送信
+        isRecording: isRecording, // ADDED: 接続時にも録音状態を送信
+        att: currentAtt
     }));
     ws.send(JSON.stringify({ type: 'bookmarks', data: bookmarks }));
     broadcastRecordings();
@@ -1473,6 +1540,8 @@ wss.on('connection', (ws) => {
                     }
                 }
                 broadcastRecordings();
+            } else if (cmd.type === 'set_att') {
+                setAttenuator(cmd.att);
             }
         } catch (e) {
             console.error('[System] WS Message Error:', e);
@@ -1542,8 +1611,8 @@ function connectToRtlTcp() {
     rtlSocket.connect(CONFIG.rtlPort, CONFIG.rtlHost, () => {
         console.log('[RTL-TCP] Connected.');
         tuneRadio(currentFreq, currentMode);
-        sendCmd(0x02, CONFIG.sampleRate);
-        sendCmd(0x03, 0); // Auto Gain
+        sendCmd(0x02, CONFIG.sampleRate); // Set Sample Rate
+        setAttenuator(currentAtt); // Set initial ATT/Gain
     });
 
     rtlSocket.on('data', (chunk) => {
