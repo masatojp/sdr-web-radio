@@ -1760,10 +1760,14 @@ function connectToRtlTcp() {
             const signalLevel = avgRssi; // RSSIを使用
             let gateGain = 1.0;
 
-            if (signalLevel < noiseGateThresh) {
-                // 線形減衰だが、フロアを少し下げる (0.3 -> 0.15)
-                // ノイズ感低減のため
-                gateGain = Math.max(0.15, signalLevel / noiseGateThresh);
+            // 緊急対応: スケルチ設定が極端に低い(-40以下)場合はゲートを無効化(常時オープン)
+            // これにより、どんなに弱い信号(管制塔)でも強制的に聞けるようにする
+            if (noiseGateThresh > -40) {
+                if (signalLevel < noiseGateThresh) {
+                    // 線形減衰だが、フロアを少し下げる (0.3 -> 0.15)
+                    // ノイズ感低減のため
+                    gateGain = Math.max(0.15, signalLevel / noiseGateThresh);
+                }
             }
             audio *= gateGain;
 
@@ -1771,21 +1775,26 @@ function connectToRtlTcp() {
             // ==========================================
             const attack = isFM ? 0.95 : 0.92;
             const release = isFM ? 0.0025 : 0.004;
-            const maxGain = isFM ? 10.0 : 40.0; // 最大ゲインをさらに下げる (60->40)
+            const maxGain = isFM ? 10.0 : 40.0; // 最大ゲイン
 
             const currentLevel = Math.abs(audio * agcGain);
 
-            if (currentLevel > 0.4) { // ターゲットレベルを下げる (0.5 -> 0.4)
+            if (currentLevel > 0.4) { // ターゲットレベル
                 agcGain *= attack;
             } else {
                 // ゲートが開いている時のみゲインアップ
-                if (signalLevel > noiseGateThresh) {
+                // (ゲート無効時は常にゲインアップ許可)
+                if (noiseGateThresh <= -40 || signalLevel > noiseGateThresh) {
                     agcGain += release;
                 }
             }
 
             if (agcGain > maxGain) agcGain = maxGain;
-            if (agcGain < 1.0) agcGain = 1.0;
+
+            // CRITICAL FIX: AGCが信号を減衰させることを許可する
+            // 以前は 1.0 でクリップしていたため、入力が大きすぎると歪んでいた
+            if (agcGain < 0.1) agcGain = 0.1;
+
             audio *= agcGain;
 
             // ==========================================
