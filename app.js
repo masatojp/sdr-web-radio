@@ -1686,7 +1686,9 @@ function connectToRtlTcp() {
             frameRssiCount++;
 
             // DCブロッキングフィルター (AM/FM共通だが、AMで特に重要)
-            const dcAlpha = isFM ? 0.999 : 0.995; // AMの追従性を少し上げる
+            // AMの場合は300Hz以下のランブルノイズをカットするためにalphaを小さくする
+            // fc = 300Hz -> alpha approx 0.9
+            const dcAlpha = isFM ? 0.999 : 0.9;
             dcOffset = (dcOffset * dcAlpha) + (val * (1.0 - dcAlpha));
             let rawAudio = val - dcOffset;
 
@@ -1696,53 +1698,65 @@ function connectToRtlTcp() {
                 rawAudio = deemphState;
             }
 
-            // ノイズリダクション (AMモードで特に有効)
-            let targetAlpha = 0.45; // デフォルトのLPF係数
+            // ==========================================
+            // 1. High Pass Filter (HPF)
+            // ==========================================
+            // 上記のDCブロッキングフィルターの定数変更により、
+            // 簡易的な300Hz HPFとして機能させているため、追加処理は不要。
+
+            // ノイズリダクション (Variable LPF)
+            let targetAlpha = 0.45;
             if (!isFM) {
-                // 信号が弱いほどLPFを強くかける (alphaを小さくしてノイズをカット)
+                // RSSIに基づいてLPFの強度を動的に変える
+                // 信号が弱い(ノイズが多い)時は、高域をバッサリ削る
                 const strength = Math.min(100, Math.max(0, avgRssi));
-                targetAlpha = 0.05 + (strength / 100) * 0.40; // 0.05 (超強ノイズ) から 0.45 (クリア) の範囲で変動。弱い信号でより強くフィルタリング
+
+                // カーブ調整: 弱い信号に対してより急激にフィルタを閉じる
+                // strength 0-30: alpha 0.02 (300Hz付近) - ほぼこもるがノイズは消える
+                // strength 30-80: alpha 0.02 - 0.3 (遷移域)
+                // strength 80+: alpha 0.45 (クリア)
+                if (strength < 30) {
+                    targetAlpha = 0.02 + (strength / 30) * 0.05;
+                } else {
+                    targetAlpha = 0.07 + ((strength - 30) / 70) * 0.38;
+                }
             }
 
             lpf1 = (lpf1 * (1.0 - targetAlpha)) + (rawAudio * targetAlpha);
             lpf2 = (lpf2 * (1.0 - targetAlpha)) + (lpf1 * targetAlpha);
 
             let audio = lpf2;
-            audio = audioLPF.process(audio); // 最終オーディオLPF
+            audio = audioLPF.process(audio);
 
             // ==========================================
-            // NEW DSP CHAIN: Noise Gate -> AGC -> Compressor
+            // 2. Noise Gate (Expander) - TUNED
             // ==========================================
-
-            // 1. Noise Gate (Expander)
-            // 信号レベルが低い場合、ゲインを下げてノイズを抑制する
-            // squelchDBの値を利用するが、より滑らかに動作させる
-            const noiseGateThresh = (squelchDB[currentFreq] || 30) + 5; // スケルチ設定より少し高めを閾値に
-            const signalLevel = avgRssi; // RSSIを使用
+            const defaultFloor = 10;
+            const noiseGateThresh = (squelchDB[currentFreq] || defaultFloor) + 2;
+            const signalLevel = avgRssi;
             let gateGain = 1.0;
 
             if (signalLevel < noiseGateThresh) {
-                // 閾値以下の場合、急激に減衰させる (Expander ratio 1:inf)
-                // ただし完全にミュートすると違和感があるので、-20dB程度まで下げる
-                gateGain = Math.max(0.1, signalLevel / noiseGateThresh);
-                gateGain = gateGain * gateGain; // 2乗特性でより急峻に
+                // 線形減衰だが、フロアを少し下げる (0.3 -> 0.15)
+                // ノイズ感低減のため
+                gateGain = Math.max(0.15, signalLevel / noiseGateThresh);
             }
             audio *= gateGain;
 
-            // 2. Improved AGC
-            // AMモードではAGCの応答を高速化し、弱い信号を素早く持ち上げる
-            // Hang Timerを追加して、言葉の間の無音でゲインが暴れるのを防ぐ
-            const attack = isFM ? 0.95 : 0.90; // AMのアタックを少し緩めて自然に
-            const release = isFM ? 0.0025 : 0.005; // AMのリリース
-            const maxGain = isFM ? 10.0 : 100.0; // AMの最大ゲインを100にアップ (弱い信号用)
+            // ==========================================
+            // 3. Improved AGC - TUNED
+            // ==========================================
+            const attack = isFM ? 0.95 : 0.92; // アタックを少し遅くして自然に
+            const release = isFM ? 0.0025 : 0.004; // リリースを少し遅く
+            const maxGain = isFM ? 10.0 : 60.0; // 最大ゲインを100->60に制限（ノイズ持ち上げ防止）
 
             const currentLevel = Math.abs(audio * agcGain);
 
             if (currentLevel > 0.5) {
-                agcGain *= attack; // Attack: 強い信号での音割れを防ぐ
+                agcGain *= attack;
             } else {
-                // 信号がある程度ある場合のみゲインを上げる (ノイズを持ち上げないため)
-                if (signalLevel > (squelchDB[currentFreq] || 10)) {
+                // ゲートが開いている時のみゲインアップ
+                if (signalLevel > noiseGateThresh) {
                     agcGain += release;
                 }
             }
@@ -1751,10 +1765,11 @@ function connectToRtlTcp() {
             if (agcGain < 1.0) agcGain = 1.0;
             audio *= agcGain;
 
-            // 3. Compressor (Dynamic Range Compression)
-            // 強い信号を抑え込み、全体的な音圧を稼ぐ
-            const compThresh = 0.4; // 閾値
-            const compRatio = 4.0;  // 圧縮比
+            // ==========================================
+            // 4. Compressor - TUNED
+            // ==========================================
+            const compThresh = 0.5; // 閾値を少し上げる
+            const compRatio = 3.0;  // 圧縮比を少し下げる (自然に)
 
             if (Math.abs(audio) > compThresh) {
                 const over = Math.abs(audio) - compThresh;
@@ -1763,11 +1778,11 @@ function connectToRtlTcp() {
                 audio = sign * (compThresh + compressed);
             }
 
-            // Makeup Gain (コンプレッサーで下がった分を持ち上げる)
-            audio *= 1.5;
+            // Makeup Gain
+            audio *= 1.3;
 
-            // ソフトクリッピングを適用して、強い信号でも音が割れにくくする
-            const k = 2.5; // クリッピングの強さを調整
+            // ソフトクリッピング
+            const k = 2.0;
             audioSamples.push(audio / (1 + k * Math.abs(audio)));
         }
 
