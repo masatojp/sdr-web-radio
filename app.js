@@ -1379,7 +1379,7 @@ function sendCmd(cmd, param) {
     if (!rtlSocket || rtlSocket.destroyed) return;
     const buf = Buffer.alloc(5);
     buf.writeUInt8(cmd, 0);
-    buf.writeUInt32BE(param, 1);
+    buf.writeInt32BE(param, 1);
     rtlSocket.write(buf);
 }
 
