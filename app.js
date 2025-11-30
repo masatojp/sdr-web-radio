@@ -921,13 +921,13 @@ const htmlContent = `
             const softThresholdPercent = thresholdPercent - 10; // ハード閾値より10低い値をソフト閾値とする
 
             let isOpen = false;
-            let softMuteGain = 1.0; // ソフトミュート用のゲイン
 
             if (state.selectedMode === 'FM') {
                 isOpen = (rssiPercent > thresholdPercent);
             } else {
-                // AMモード: ソフトスケルチを適用
-                isOpen = (rssiPercent > softThresholdPercent); // 弱い信号でもスケルチ判定は開く
+                // AMモード: ヒステリシスを導入
+                const hysterisis = state.isSquelchOpen ? 0.95 : 1.0; // スケルチが開いている間は、閾値を5%下げる
+                isOpen = (rssiPercent > (thresholdPercent * hysterisis));
             }
             // state.isSquelchOpen は後段の isOutput 判定で使われるため、isOpen の結果を反映
             state.isSquelchOpen = isOpen;
@@ -1711,10 +1711,10 @@ function connectToRtlTcp() {
 
             // AGC
             const currentLevel = Math.abs(audio * agcGain);
-            if (currentLevel > 0.6) agcGain *= 0.99;
-            else agcGain += 0.005; // 弱い信号に対するゲイン回復を速める
+            if (currentLevel > 0.6) agcGain *= 0.98; // Attack: 強い信号に素早く反応
+            else agcGain += 0.0005; // Release: ゲインの回復を遅くしてノイズ上昇を抑制
 
-            const maxGain = isFM ? 10.0 : 60.0; // AMの最大ゲインを60に調整
+            const maxGain = isFM ? 10.0 : 40.0; // AMの最大ゲインを40に調整
             if (agcGain > maxGain) agcGain = maxGain;
             if (agcGain < 1.0) agcGain = 1.0; // 最小ゲインを1.0に設定
             audio *= agcGain;
