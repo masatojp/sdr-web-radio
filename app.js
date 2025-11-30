@@ -1649,14 +1649,14 @@ function stopRecording() {
     if (!isRecording || !recordingStream) return;
     isRecording = false;
 
-    // MODIFIED: recordingStream.path ではなく保存した変数を使用
+    // MODIFIED: recordingStream.path ではなく保存した変数を使用 (FIX)
     const filename = currentRecordingFilename;
 
     // ストリームを正しく終了させる
     recordingStream.end();
     recordingStream = null;
     currentRecordingFilename = "";
-
+    
     console.log(`[Recording] Stopped: ${filename} `);
     broadcastStatus(); // ADDED: 全クライアントに録音停止を通知
 }
