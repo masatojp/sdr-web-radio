@@ -928,10 +928,8 @@ const htmlContent = `
             } else {
                 // AMモード: ソフトスケルチを適用
                 isOpen = (rssiPercent > softThresholdPercent); // 弱い信号でもスケルチ判定は開く
-                if (isOpen && rssiPercent < thresholdPercent) {
-                    softMuteGain = 0.4; // 弱い信号の場合、音量を40%に下げる
-                }
             }
+            // state.isSquelchOpen は後段の isOutput 判定で使われるため、isOpen の結果を反映
             state.isSquelchOpen = isOpen;
 
             els.signalBar.style.width = clampPercent(rssiPercent) + '%';
@@ -945,12 +943,6 @@ const htmlContent = `
                 els.sqLed.style.color = "#00e676";
                 els.sqLed.style.textShadow = "0 0 5px #00e676";
 
-                // AMモードでソフトミュートが有効な場合、音声サンプルにゲインを適用
-                if (state.selectedMode === 'AM' && softMuteGain < 1.0) {
-                    for (let i = 0; i < audioSamples.length; i++) {
-                        audioSamples[i] *= softMuteGain;
-                    }
-                }
                 const audioBuf = state.audioCtx.createBuffer(1, audioSamples.length, state.audioRate);
                 audioBuf.getChannelData(0).set(audioSamples);
                 const src = state.audioCtx.createBufferSource();
@@ -1719,11 +1711,11 @@ function connectToRtlTcp() {
             // AGC
             const currentLevel = Math.abs(audio * agcGain);
             if (currentLevel > 0.6) agcGain *= 0.99;
-            else agcGain += 0.002;
+            else agcGain += 0.005; // 弱い信号に対するゲイン回復を速める
 
-            const maxGain = isFM ? 10.0 : 30.0; // AMの最大ゲインを100から30に引き下げ
+            const maxGain = isFM ? 10.0 : 100.0; // AMの最大ゲインを100に戻す
             if (agcGain > maxGain) agcGain = maxGain;
-            if (agcGain < 0.01) agcGain = 0.01;
+            if (agcGain < 1.0) agcGain = 1.0; // 最小ゲインを1.0に設定
             audio *= agcGain;
             
             // ソフトクリッピングを適用して、強い信号でも音が割れにくくする
