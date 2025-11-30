@@ -1690,41 +1690,33 @@ function connectToRtlTcp() {
                 rawAudio = deemphState;
             }
 
-            let softMuteGain = 1.0;
-            let targetAlpha;
-            if (isFM) {
+            // ノイズリダクション (AMモードで特に有効)
+            let targetAlpha = 0.45; // デフォルトのLPF係数
+            if (!isFM) {
+                // 信号が弱いほどLPFを強くかける (alphaを小さくしてノイズをカット)
                 const strength = Math.min(100, Math.max(0, avgRssi));
-                if (strength < 40) targetAlpha = 0.02;
-                else if (strength > 70) targetAlpha = 0.35;
-                else targetAlpha = 0.02 + (strength - 40) * (0.33 / 30);
-
-                softMuteGain = (strength < 25) ? Math.sqrt(Math.max(0, strength / 25.0)) : 1.0;
-            } else {
-                // AM: 信号強度に応じてLPFのカットオフを調整
-                const strength = Math.min(100, Math.max(0, avgRssi));
-                // 信号が弱いほどLPFを強くかける (alphaを小さくする)
-                targetAlpha = 0.05 + (strength / 100) * 0.4; // 0.05から0.45の範囲で変動
+                targetAlpha = 0.08 + (strength / 100) * 0.37; // 0.08 (強ノイズ) から 0.45 (クリア) の範囲で変動
             }
 
             lpf1 = (lpf1 * (1.0 - targetAlpha)) + (rawAudio * targetAlpha);
             lpf2 = (lpf2 * (1.0 - targetAlpha)) + (lpf1 * targetAlpha);
 
             let audio = lpf2;
-            audio = audioLPF.process(audio);
-            if (isFM) audio *= softMuteGain;
+            audio = audioLPF.process(audio); // 最終オーディオLPF
 
             // AGC
             const currentLevel = Math.abs(audio * agcGain);
-            if (currentLevel > 0.6) agcGain *= 0.98; // Attack: 強い信号に素早く反応
-            else agcGain += 0.0008; // Release: ゲインの回復を少し緩やかに戻す
+            if (currentLevel > 0.5) agcGain *= 0.95; // Attack: 閾値を下げ、より素早く反応して音割れを防ぐ
+            else agcGain += 0.0015; // Release: 弱い信号に対してゲイン回復を速くする
 
-            const maxGain = isFM ? 10.0 : 150.0; // AMの最大ゲインを150に調整
+            const maxGain = isFM ? 10.0 : 120.0; // AMの最大ゲインを120に調整（音割れ防止）
             if (agcGain > maxGain) agcGain = maxGain;
             if (agcGain < 1.0) agcGain = 1.0;
             audio *= agcGain;
             
             // ソフトクリッピングを適用して、強い信号でも音が割れにくくする
-            audioSamples.push(Math.tanh(audio));
+            const k = 2.5; // クリッピングの強さを調整
+            audioSamples.push(audio / (1 + k * Math.abs(audio)));
         }
 
         if (audioSamples.length > 0 && wss.clients.size > 0) {
