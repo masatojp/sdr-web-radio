@@ -1665,10 +1665,15 @@ function connectToRtlTcp() {
                     prevAngle = angle;
                     sampleSum += dAngle;
                 } else {
-                    // AM復調: 振幅検波 (DCブロッキングフィルター方式に戻す)
-                    const mag = Math.sqrt(I_filt * I_filt + Q_filt * Q_filt);
-                    rssiSum += mag;
-                    sampleSum += mag;
+                    // AM復調改善: DCオフセット除去とエンベロープ検波
+                    i_dc = (i_dc * 0.99) + (I_filt * 0.01);
+                    q_dc = (q_dc * 0.99) + (Q_filt * 0.01);
+                    const I_am = I_filt - i_dc;
+                    const Q_am = Q_filt - q_dc;
+
+                    const mag = Math.sqrt(I_am * I_am + Q_am * Q_am);
+                    rssiSum += Math.sqrt(I_filt * I_filt + Q_filt * Q_filt); // RSSIは補正前の値で計算
+                    sampleSum += mag; // 音声信号は補正後の値で生成
                 }
                 count++;
             }
@@ -1709,7 +1714,7 @@ function connectToRtlTcp() {
             if (currentLevel > 0.5) agcGain *= 0.95; // Attack: 閾値を下げ、より素早く反応して音割れを防ぐ
             else agcGain += 0.0015; // Release: 弱い信号に対してゲイン回復を速くする
 
-            const maxGain = isFM ? 10.0 : 120.0; // AMの最大ゲインを120に調整（音割れ防止）
+            const maxGain = isFM ? 10.0 : 80.0; // AMの最大ゲインを80に調整（音割れ防止）
             if (agcGain > maxGain) agcGain = maxGain;
             if (agcGain < 1.0) agcGain = 1.0;
             audio *= agcGain;
