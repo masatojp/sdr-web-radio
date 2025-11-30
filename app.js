@@ -917,14 +917,21 @@ const htmlContent = `
 
             const thresholdPercent = state.noiseFloor + state.sqMargin;
 
+            // AMモード用のソフトスケルチ閾値
+            const softThresholdPercent = thresholdPercent - 10; // ハード閾値より10低い値をソフト閾値とする
+
             let isOpen = false;
+            let softMuteGain = 1.0; // ソフトミュート用のゲイン
+
             if (state.selectedMode === 'FM') {
                 isOpen = (rssiPercent > thresholdPercent);
             } else {
-                const hysterisis = state.isSquelchOpen ? 0.9 : 1.0;
-                isOpen = (rssiPercent > (thresholdPercent * hysterisis));
+                // AMモード: ソフトスケルチを適用
+                isOpen = (rssiPercent > softThresholdPercent); // 弱い信号でもスケルチ判定は開く
+                if (isOpen && rssiPercent < thresholdPercent) {
+                    softMuteGain = 0.4; // 弱い信号の場合、音量を40%に下げる
+                }
             }
-
             state.isSquelchOpen = isOpen;
 
             els.signalBar.style.width = clampPercent(rssiPercent) + '%';
@@ -938,6 +945,12 @@ const htmlContent = `
                 els.sqLed.style.color = "#00e676";
                 els.sqLed.style.textShadow = "0 0 5px #00e676";
 
+                // AMモードでソフトミュートが有効な場合、音声サンプルにゲインを適用
+                if (state.selectedMode === 'AM' && softMuteGain < 1.0) {
+                    for (let i = 0; i < audioSamples.length; i++) {
+                        audioSamples[i] *= softMuteGain;
+                    }
+                }
                 const audioBuf = state.audioCtx.createBuffer(1, audioSamples.length, state.audioRate);
                 audioBuf.getChannelData(0).set(audioSamples);
                 const src = state.audioCtx.createBufferSource();
