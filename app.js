@@ -62,7 +62,7 @@ if (!fs.existsSync(CONFIG.recordingsPath)) {
     fs.mkdirSync(CONFIG.recordingsPath);
 }
 
-console.log(`[System] Starting Web SDR Monitor (AM Optimized)...`);
+console.log(`[System] Starting Web SDR Monitor (AM Noise Fix)...`);
 console.log(`[Init] RF: ${CONFIG.frequency}Hz`);
 console.log(`[Audio] Decimation: 1/${DECIMATION}, Rate: ${ACTUAL_AUDIO_RATE.toFixed(2)}Hz`);
 
@@ -1741,11 +1741,9 @@ function connectToRtlTcp() {
             frameRssiCount++;
 
             // ==========================================
-            // AM Pre-Gain (Boost weak AM signals immediately)
+            // AM Pre-Gain Removed (Was causing distortion)
             // ==========================================
-            if (!isFM) {
-                val *= 2.0; // AM信号を予めブーストしてS/N感を稼ぐ
-            }
+            // if (!isFM) { val *= 2.0; } 
 
             // ==========================================
             // 1. High Pass Filter (HPF)
@@ -1811,11 +1809,12 @@ function connectToRtlTcp() {
             // ==========================================
             // AM FIX: Attack/ReleaseをAM専用に調整
             // FM: Attack 0.95, Release 0.0025
-            // AM: Attack 0.98 (突発ノイズ無視), Release 0.08 (高速回復)
+            // AM: Attack 0.98 (突発ノイズ無視), Release 0.02 (よりマイルドに)
             const attack = isFM ? 0.95 : 0.98;
-            // AM時は、強い信号(飛行機)の直後の弱い信号(管制)を拾うため、リリースを高速にする
-            const release = isFM ? 0.0025 : 0.08; 
-            const maxGain = isFM ? 10.0 : 50.0; // AMは最大ゲインを大きくして微弱信号を持ち上げる
+            // AM時は、リリースが速すぎるとノイズをうねりとして増幅してしまうため、少し遅くする
+            // 0.08(速すぎ) -> 0.02(適度)
+            const release = isFM ? 0.0025 : 0.02; 
+            const maxGain = isFM ? 10.0 : 30.0; // AMの最大ゲインを下げてノイズフロアの持ち上げすぎを防ぐ
 
             const currentLevel = Math.abs(audio * agcGain);
 
