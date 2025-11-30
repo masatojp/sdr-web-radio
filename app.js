@@ -1602,10 +1602,10 @@ async function startRecording() {
 function stopRecording() {
     if (!isRecording || !recordingStream) return;
     isRecording = false;
-    
+
     // MODIFIED: recordingStream.path ではなく保存した変数を使用
     const filename = currentRecordingFilename;
-    
+
     // ストリームを正しく終了させる
     recordingStream.end();
     recordingStream = null;
@@ -1710,22 +1710,62 @@ function connectToRtlTcp() {
             let audio = lpf2;
             audio = audioLPF.process(audio); // 最終オーディオLPF
 
-            // AGC
+            // ==========================================
+            // NEW DSP CHAIN: Noise Gate -> AGC -> Compressor
+            // ==========================================
+
+            // 1. Noise Gate (Expander)
+            // 信号レベルが低い場合、ゲインを下げてノイズを抑制する
+            // squelchDBの値を利用するが、より滑らかに動作させる
+            const noiseGateThresh = (squelchDB[currentFreq] || 30) + 5; // スケルチ設定より少し高めを閾値に
+            const signalLevel = avgRssi; // RSSIを使用
+            let gateGain = 1.0;
+
+            if (signalLevel < noiseGateThresh) {
+                // 閾値以下の場合、急激に減衰させる (Expander ratio 1:inf)
+                // ただし完全にミュートすると違和感があるので、-20dB程度まで下げる
+                gateGain = Math.max(0.1, signalLevel / noiseGateThresh);
+                gateGain = gateGain * gateGain; // 2乗特性でより急峻に
+            }
+            audio *= gateGain;
+
+            // 2. Improved AGC
             // AMモードではAGCの応答を高速化し、弱い信号を素早く持ち上げる
-            const attack = isFM ? 0.95 : 0.85; // AMのアタックを速くする
-            const release = isFM ? 0.0025 : 0.008; // AMのリリースを速くする
+            // Hang Timerを追加して、言葉の間の無音でゲインが暴れるのを防ぐ
+            const attack = isFM ? 0.95 : 0.90; // AMのアタックを少し緩めて自然に
+            const release = isFM ? 0.0025 : 0.005; // AMのリリース
+            const maxGain = isFM ? 10.0 : 100.0; // AMの最大ゲインを100にアップ (弱い信号用)
 
             const currentLevel = Math.abs(audio * agcGain);
+
             if (currentLevel > 0.5) {
                 agcGain *= attack; // Attack: 強い信号での音割れを防ぐ
             } else {
-                agcGain += release; // Release: 弱い信号に対してゲイン回復を速くする
+                // 信号がある程度ある場合のみゲインを上げる (ノイズを持ち上げないため)
+                if (signalLevel > (squelchDB[currentFreq] || 10)) {
+                    agcGain += release;
+                }
             }
-            const maxGain = isFM ? 10.0 : 80.0; // AMの最大ゲインを80に調整
+
             if (agcGain > maxGain) agcGain = maxGain;
             if (agcGain < 1.0) agcGain = 1.0;
             audio *= agcGain;
-            
+
+            // 3. Compressor (Dynamic Range Compression)
+            // 強い信号を抑え込み、全体的な音圧を稼ぐ
+            const compThresh = 0.4; // 閾値
+            const compRatio = 4.0;  // 圧縮比
+
+            if (Math.abs(audio) > compThresh) {
+                const over = Math.abs(audio) - compThresh;
+                const compressed = over / compRatio;
+                const sign = audio > 0 ? 1 : -1;
+                audio = sign * (compThresh + compressed);
+            }
+
+            // Makeup Gain (コンプレッサーで下がった分を持ち上げる)
+            audio *= 1.5;
+
             // ソフトクリッピングを適用して、強い信号でも音が割れにくくする
             const k = 2.5; // クリッピングの強さを調整
             audioSamples.push(audio / (1 + k * Math.abs(audio)));
