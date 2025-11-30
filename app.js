@@ -1712,11 +1712,9 @@ function connectToRtlTcp() {
             if (agcGain > maxGain) agcGain = maxGain;
             if (agcGain < 0.01) agcGain = 0.01;
             audio *= agcGain;
-
-            if (audio > 1.0) audio = 1.0;
-            else if (audio < -1.0) audio = -1.0;
-
-            audioSamples.push(audio);
+            
+            // ソフトクリッピングを適用して、強い信号でも音が割れにくくする
+            audioSamples.push(Math.tanh(audio));
         }
 
         if (audioSamples.length > 0 && wss.clients.size > 0) {
