@@ -1665,12 +1665,10 @@ function connectToRtlTcp() {
                     prevAngle = angle;
                     sampleSum += dAngle;
                 } else {
-                    // AM復調: 振幅検波
+                    // AM復調: 振幅検波 (DCブロッキングフィルター方式に戻す)
                     const mag = Math.sqrt(I_filt * I_filt + Q_filt * Q_filt);
                     rssiSum += mag;
-                    // 変化量（微分）を音声信号とする。これによりDCオフセット問題を回避
-                    sampleSum += (mag - prev_mag);
-                    prev_mag = mag;
+                    sampleSum += mag;
                 }
                 count++;
             }
@@ -1681,12 +1679,10 @@ function connectToRtlTcp() {
             frameRssiSum += avgRssi;
             frameRssiCount++;
 
-            let rawAudio = val;
-            if (isFM) {
-                const dcAlpha = 0.999;
-                dcOffset = (dcOffset * dcAlpha) + (val * (1.0 - dcAlpha));
-                rawAudio = val - dcOffset;
-            }
+            // DCブロッキングフィルター (AM/FM共通だが、AMで特に重要)
+            const dcAlpha = isFM ? 0.999 : 0.995; // AMの追従性を少し上げる
+            dcOffset = (dcOffset * dcAlpha) + (val * (1.0 - dcAlpha));
+            let rawAudio = val - dcOffset;
 
             if (isFM) {
                 const deemphAlpha = 0.38;
@@ -1719,10 +1715,10 @@ function connectToRtlTcp() {
 
             // AGC
             const currentLevel = Math.abs(audio * agcGain);
-            if (currentLevel > 0.6) agcGain *= 0.98; // Attack: 強い信号に素早く反応 (変更なし)
-            else agcGain += 0.002; // Release: ゲインの回復をさらに速くする
+            if (currentLevel > 0.6) agcGain *= 0.98; // Attack: 強い信号に素早く反応
+            else agcGain += 0.0008; // Release: ゲインの回復を少し緩やかに戻す
 
-            const maxGain = isFM ? 10.0 : 200.0; // AMの最大ゲインを200に大幅に引き上げ
+            const maxGain = isFM ? 10.0 : 150.0; // AMの最大ゲインを150に調整
             if (agcGain > maxGain) agcGain = maxGain;
             if (agcGain < 1.0) agcGain = 1.0;
             audio *= agcGain;
