@@ -1680,21 +1680,20 @@ function connectToRtlTcp() {
                 rawAudio = deemphState;
             }
 
-            let targetAlpha = 0.5;
             let softMuteGain = 1.0;
+            let targetAlpha;
             if (isFM) {
                 const strength = Math.min(100, Math.max(0, avgRssi));
                 if (strength < 40) targetAlpha = 0.02;
                 else if (strength > 70) targetAlpha = 0.35;
                 else targetAlpha = 0.02 + (strength - 40) * (0.33 / 30);
 
-                if (strength < 25) {
-                    softMuteGain = strength / 25.0;
-                    if (softMuteGain < 0) softMuteGain = 0;
-                    softMuteGain = Math.sqrt(softMuteGain);
-                }
+                softMuteGain = (strength < 25) ? Math.sqrt(Math.max(0, strength / 25.0)) : 1.0;
             } else {
-                targetAlpha = 0.35;
+                // AM: 信号強度に応じてLPFのカットオフを調整
+                const strength = Math.min(100, Math.max(0, avgRssi));
+                // 信号が弱いほどLPFを強くかける (alphaを小さくする)
+                targetAlpha = 0.05 + (strength / 100) * 0.4; // 0.05から0.45の範囲で変動
             }
 
             lpf1 = (lpf1 * (1.0 - targetAlpha)) + (rawAudio * targetAlpha);
@@ -1709,7 +1708,7 @@ function connectToRtlTcp() {
             if (currentLevel > 0.6) agcGain *= 0.99;
             else agcGain += 0.002;
 
-            const maxGain = isFM ? 10.0 : 100.0;
+            const maxGain = isFM ? 10.0 : 30.0; // AMの最大ゲインを100から30に引き下げ
             if (agcGain > maxGain) agcGain = maxGain;
             if (agcGain < 0.01) agcGain = 0.01;
             audio *= agcGain;
