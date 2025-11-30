@@ -1294,6 +1294,7 @@ let i_dc = 0, q_dc = 0;
 let lpf1 = 0;
 let lpf2 = 0;
 let agcGain = 10.0;
+let prev_mag = 0; // ADDED: AM復調用に前の振幅を保持
 let deemphState = 0;
 
 // Biquad Filter Class
@@ -1374,6 +1375,7 @@ function resetDspState() {
     lpf1 = 0;
     lpf2 = 0;
     agcGain = 10.0;
+    prev_mag = 0; // ADDED: DSP状態リセット時に初期化
     deemphState = 0;
     audioLPF.reset();
     ifFilterI.reset();
@@ -1663,9 +1665,12 @@ function connectToRtlTcp() {
                     prevAngle = angle;
                     sampleSum += dAngle;
                 } else {
+                    // AM復調: 振幅検波
                     const mag = Math.sqrt(I_filt * I_filt + Q_filt * Q_filt);
                     rssiSum += mag;
-                    sampleSum += mag;
+                    // 変化量（微分）を音声信号とする。これによりDCオフセット問題を回避
+                    sampleSum += (mag - prev_mag);
+                    prev_mag = mag;
                 }
                 count++;
             }
@@ -1676,9 +1681,12 @@ function connectToRtlTcp() {
             frameRssiSum += avgRssi;
             frameRssiCount++;
 
-            const dcAlpha = isFM ? 0.999 : 0.95;
-            dcOffset = (dcOffset * dcAlpha) + (val * (1.0 - dcAlpha));
-            let rawAudio = (val - dcOffset);
+            let rawAudio = val;
+            if (isFM) {
+                const dcAlpha = 0.999;
+                dcOffset = (dcOffset * dcAlpha) + (val * (1.0 - dcAlpha));
+                rawAudio = val - dcOffset;
+            }
 
             if (isFM) {
                 const deemphAlpha = 0.38;
