@@ -62,7 +62,7 @@ if (!fs.existsSync(CONFIG.recordingsPath)) {
     fs.mkdirSync(CONFIG.recordingsPath);
 }
 
-console.log(`[System] Starting Web SDR Monitor (AM Noise Fix)...`);
+console.log(`[System] Starting Web SDR Monitor (AM Quiet Fix)...`);
 console.log(`[Init] RF: ${CONFIG.frequency}Hz`);
 console.log(`[Audio] Decimation: 1/${DECIMATION}, Rate: ${ACTUAL_AUDIO_RATE.toFixed(2)}Hz`);
 
@@ -1771,9 +1771,10 @@ function connectToRtlTcp() {
                 if (strength < 30) {
                     // AM FIX: 弱入力時でもフィルタを閉じすぎない (0.02 -> 0.1)
                     // 管制塔の声はノイズに埋もれがちなので、こもらせると聞き取れない
-                    targetAlpha = 0.1 + (strength / 30) * 0.05;
+                    // 改良：0.2まで上げて明瞭度を確保
+                    targetAlpha = 0.2 + (strength / 30) * 0.05;
                 } else {
-                    targetAlpha = 0.15 + ((strength - 30) / 70) * 0.30;
+                    targetAlpha = 0.25 + ((strength - 30) / 70) * 0.20;
                 }
             }
 
@@ -1792,17 +1793,25 @@ function connectToRtlTcp() {
 
             // AM FIX: AMモードではノイズゲートを基本的にバイパスまたは極めて弱くする
             // 微弱な管制塔の信号がゲートで切れるのを防ぐため
-            if (isFM) {
+            if (!isFM) {
                 // 緊急対応: スケルチ設定が極端に低い(-40以下)場合はゲートを無効化(常時オープン)
                 if (noiseGateThresh > -40) {
                     if (signalLevel < noiseGateThresh) {
                         // 線形減衰。フロアを0にする (完全にミュート)
+                        // ノイズを消すため、さらに厳しく (3乗カーブ)
                         gateGain = Math.max(0.0, signalLevel / noiseGateThresh);
-                        // カーブを急にする (2乗)
-                        gateGain = gateGain * gateGain;
+                        // カーブを急にする (3乗)
+                        gateGain = gateGain * gateGain * gateGain;
                     }
                 }
                 audio *= gateGain;
+            } else {
+                // FM用の既存ロジック（そのまま）
+                if (noiseGateThresh > -40 && signalLevel < noiseGateThresh) {
+                     gateGain = Math.max(0.0, signalLevel / noiseGateThresh);
+                     gateGain = gateGain * gateGain;
+                     audio *= gateGain;
+                }
             }
 
             // 3. Improved AGC - TUNED for High Input & Weak AM Signals
@@ -1822,8 +1831,9 @@ function connectToRtlTcp() {
                 agcGain *= attack;
             } else {
                 // ゲートが開いている時のみゲインアップ
-                // AMはゲートがないので常に回復
-                if (!isFM || noiseGateThresh <= -40 || signalLevel > noiseGateThresh - 5) { 
+                // AM Fix: 無音時にゲインを上げない (ノイズフロア増幅防止)
+                // 信号レベルが閾値を超えている場合のみゲイン回復を許可
+                if (isFM || (noiseGateThresh <= -40 || signalLevel > noiseGateThresh - 2)) { 
                     agcGain += release;
                 }
             }
