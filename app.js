@@ -16,8 +16,8 @@ const CONFIG = {
     // 初期設定
     frequency: 93500000,
     mode: 'FM',
-    // RTL-SDRのサンプリングレート (250k)
-    sampleRate: 250000,
+    // RTL-SDRのサンプリングレート (256k - Integer Decimation for 16k)
+    sampleRate: 256000,
     // 目標とする音声レート
     audioRate: 16000,
     password: "admin",
@@ -1318,9 +1318,10 @@ let deemphState = 0;
 
 // Biquad Filter Class
 class Biquad {
-    constructor(fs, fc, q) {
+    constructor(type, fs, fc, q) {
         this.x1 = 0; this.x2 = 0;
         this.y1 = 0; this.y2 = 0;
+        this.type = type;
         this.calcCoeffs(fs, fc, q);
     }
 
@@ -1330,12 +1331,23 @@ class Biquad {
         const cs = Math.cos(omega);
         const alpha = sn / (2 * q);
 
-        const b0 = (1 - cs) / 2;
-        const b1 = 1 - cs;
-        const b2 = (1 - cs) / 2;
-        const a0 = 1 + alpha;
-        const a1 = -2 * cs;
-        const a2 = 1 - alpha;
+        let b0, b1, b2, a0, a1, a2;
+
+        if (this.type === 'LPF') {
+            b0 = (1 - cs) / 2;
+            b1 = 1 - cs;
+            b2 = (1 - cs) / 2;
+            a0 = 1 + alpha;
+            a1 = -2 * cs;
+            a2 = 1 - alpha;
+        } else { // HPF
+            b0 = (1 + cs) / 2;
+            b1 = -(1 + cs);
+            b2 = (1 + cs) / 2;
+            a0 = 1 + alpha;
+            a1 = -2 * cs;
+            a2 = 1 - alpha;
+        }
 
         this.b0 = b0 / a0;
         this.b1 = b1 / a0;
@@ -1361,7 +1373,7 @@ class CascadeBiquad {
     constructor(fs, fc, q, stages = 2) {
         this.stages = [];
         for (let i = 0; i < stages; i++) {
-            this.stages.push(new Biquad(fs, fc, q));
+            this.stages.push(new Biquad('LPF', fs, fc, q));
         }
     }
     calcCoeffs(fs, fc, q) {
@@ -1379,7 +1391,9 @@ class CascadeBiquad {
 
 // Balanced 2nd Order LPF (ACTUAL_AUDIO_RATE is used for calculation)
 // 正確なレートに合わせて7kHzのLPFを設定
-const audioLPF = new Biquad(ACTUAL_AUDIO_RATE, 4000, 0.707);
+// Audio Filters
+const audioLPF = new Biquad('LPF', ACTUAL_AUDIO_RATE, 3500, 0.707);
+const audioHPF = new Biquad('HPF', ACTUAL_AUDIO_RATE, 300, 0.707);
 
 // IF Filters (I/Q Channels)
 let ifFilterI = new CascadeBiquad(CONFIG.sampleRate, 100000, 0.707, 2);
@@ -1397,6 +1411,7 @@ function resetDspState() {
     prev_mag = 0; // ADDED: DSP状態リセット時に初期化
     deemphState = 0;
     audioLPF.reset();
+    audioHPF.reset();
     ifFilterI.reset();
     ifFilterQ.reset();
 }
@@ -1415,12 +1430,15 @@ function updateFilterBandwidth(mode) {
         ifFilterI.calcCoeffs(CONFIG.sampleRate, bw, 0.707);
         ifFilterQ.calcCoeffs(CONFIG.sampleRate, bw, 0.707);
         console.log(`[DSP] Set IF Filter to Narrow AM (${bw}Hz, 4th Order)`);
-        audioLPF.calcCoeffs(ACTUAL_AUDIO_RATE, 3500, 0.707); // AM用にオーディオLPFを3.5kHzに設定し、高域ノイズをカット
+        audioLPF.calcCoeffs(ACTUAL_AUDIO_RATE, 3500, 0.707);
+        audioHPF.calcCoeffs(ACTUAL_AUDIO_RATE, 300, 0.707);
     } else {
         const bw = 100000;
         ifFilterI.calcCoeffs(CONFIG.sampleRate, bw, 0.707);
         ifFilterQ.calcCoeffs(CONFIG.sampleRate, bw, 0.707);
         console.log(`[DSP] Set IF Filter to Wide FM (${bw}Hz)`);
+        audioLPF.calcCoeffs(ACTUAL_AUDIO_RATE, 7000, 0.707);
+        audioHPF.calcCoeffs(ACTUAL_AUDIO_RATE, 50, 0.707); // FMは低域も通す
     }
 }
 
@@ -1707,24 +1725,17 @@ function connectToRtlTcp() {
             frameRssiSum += avgRssi;
             frameRssiCount++;
 
-            // DCブロッキングフィルター (AM/FM共通だが、AMで特に重要)
-            // AMの場合は300Hz以下のランブルノイズをカットするためにalphaを小さくする
-            // fc = 300Hz -> alpha approx 0.9
-            const dcAlpha = isFM ? 0.999 : 0.9;
-            dcOffset = (dcOffset * dcAlpha) + (val * (1.0 - dcAlpha));
-            let rawAudio = val - dcOffset;
-
-            if (isFM) {
-                const deemphAlpha = 0.38;
-                deemphState = (deemphState * (1.0 - deemphAlpha)) + (rawAudio * deemphAlpha);
-                rawAudio = deemphState;
-            }
-
             // ==========================================
             // 1. High Pass Filter (HPF)
             // ==========================================
-            // 上記のDCブロッキングフィルターの定数変更により、
-            // 簡易的な300Hz HPFとして機能させているため、追加処理は不要。
+            // DCオフセットと300Hz以下のランブルノイズを除去
+            let audio = audioHPF.process(val);
+
+            if (isFM) {
+                const deemphAlpha = 0.38;
+                deemphState = (deemphState * (1.0 - deemphAlpha)) + (audio * deemphAlpha);
+                audio = deemphState;
+            }
 
             // ノイズリダクション (Variable LPF)
             let targetAlpha = 0.45;
@@ -1744,9 +1755,9 @@ function connectToRtlTcp() {
                 }
             }
 
-            lpf1 = (lpf1 * (1.0 - targetAlpha)) + (rawAudio * targetAlpha);
+            lpf1 = (lpf1 * (1.0 - targetAlpha)) + (audio * targetAlpha);
             lpf2 = (lpf2 * (1.0 - targetAlpha)) + (lpf1 * targetAlpha);
-            let audio = lpf2;
+            audio = lpf2;
             audio = audioLPF.process(audio);
 
             // ==========================================
@@ -1774,7 +1785,7 @@ function connectToRtlTcp() {
             // ==========================================
             const attack = isFM ? 0.95 : 0.92;
             const release = isFM ? 0.0025 : 0.004;
-            const maxGain = isFM ? 10.0 : 40.0; // 最大ゲイン
+            const maxGain = isFM ? 10.0 : 20.0; // 最大ゲインを制限 (40 -> 20)
 
             const currentLevel = Math.abs(audio * agcGain);
 
