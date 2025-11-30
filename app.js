@@ -1359,7 +1359,7 @@ class CascadeBiquad {
 
 // Balanced 2nd Order LPF (ACTUAL_AUDIO_RATE is used for calculation)
 // 正確なレートに合わせて7kHzのLPFを設定
-const audioLPF = new Biquad(ACTUAL_AUDIO_RATE, 7000, 0.707);
+const audioLPF = new Biquad(ACTUAL_AUDIO_RATE, 4000, 0.707);
 
 // IF Filters (I/Q Channels)
 let ifFilterI = new CascadeBiquad(CONFIG.sampleRate, 100000, 0.707, 2);
@@ -1394,6 +1394,7 @@ function updateFilterBandwidth(mode) {
         ifFilterI.calcCoeffs(CONFIG.sampleRate, bw, 0.707);
         ifFilterQ.calcCoeffs(CONFIG.sampleRate, bw, 0.707);
         console.log(`[DSP] Set IF Filter to Narrow AM (${bw}Hz, 4th Order)`);
+        audioLPF.calcCoeffs(ACTUAL_AUDIO_RATE, 4000, 0.707); // AM用にオーディオLPFを4kHzに設定
     } else {
         const bw = 100000;
         ifFilterI.calcCoeffs(CONFIG.sampleRate, bw, 0.707);
@@ -1713,7 +1714,7 @@ function connectToRtlTcp() {
             if (currentLevel > 0.6) agcGain *= 0.99;
             else agcGain += 0.005; // 弱い信号に対するゲイン回復を速める
 
-            const maxGain = isFM ? 10.0 : 100.0; // AMの最大ゲインを100に戻す
+            const maxGain = isFM ? 10.0 : 60.0; // AMの最大ゲインを60に調整
             if (agcGain > maxGain) agcGain = maxGain;
             if (agcGain < 1.0) agcGain = 1.0; // 最小ゲインを1.0に設定
             audio *= agcGain;
