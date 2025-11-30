@@ -559,7 +559,23 @@ const htmlContent = `
             if (newVal > 50) newVal = 50;
             state.sqMargin = newVal;
             updateSqUI();
+            sendSquelchUpdate();
         };
+
+        function sendSquelchUpdate() {
+            // ノイズフロア + マージン = 閾値
+            const threshold = state.noiseFloor + state.sqMargin;
+            
+            // UI上のマーカー更新
+            // ※簡易実装: 0-100%の範囲にマッピング (RSSIは0-100想定)
+            els.threshMarker.style.left = Math.max(0, Math.min(100, threshold)) + '%';
+            els.floorMarker.style.left = Math.max(0, Math.min(100, state.noiseFloor)) + '%';
+
+            worker.postMessage({
+                type: 'command',
+                payload: { type: 'set_squelch_threshold', threshold: threshold }
+            });
+        }
 
         els.btnM10.addEventListener('click', () => adjustSq(-10));
         els.btnM1.addEventListener('click', () => adjustSq(-1));
@@ -583,6 +599,7 @@ const htmlContent = `
         els.sqRange.addEventListener('input', (e) => {
             state.sqMargin = parseInt(e.target.value);
             updateSqUI();
+            sendSquelchUpdate();
         });
 
         window.setAtt = (att) => {
@@ -838,6 +855,7 @@ const htmlContent = `
 
                     if (pl.savedNoiseFloor) {
                         state.noiseFloor = pl.savedNoiseFloor;
+                        sendSquelchUpdate(); // フロア更新時も閾値を再送
                     }
 
                     if (pl.audioRate && state.audioRate !== pl.audioRate) {
@@ -1279,6 +1297,7 @@ let rtlSocket = null;
 let currentFreq = CONFIG.frequency;
 let currentMode = CONFIG.mode;
 let currentAtt = 'off'; // 'off', 'weak', 'strong'
+let currentSquelchThreshold = 30; // ADDED: クライアントからのスケルチ閾値
 let isTuning = false;
 
 // Recording State
@@ -1551,6 +1570,12 @@ wss.on('connection', (ws) => {
                 broadcastRecordings();
             } else if (cmd.type === 'set_att') {
                 setAttenuator(cmd.att);
+            } else if (cmd.type === 'set_squelch_threshold') {
+                // クライアントから計算済みの閾値を受け取る
+                if (typeof cmd.threshold === 'number') {
+                    currentSquelchThreshold = cmd.threshold;
+                    // console.log(`[DSP] Squelch Threshold set to: ${currentSquelchThreshold}`);
+                }
             }
         } catch (e) {
             console.error('[System] WS Message Error:', e);
@@ -1724,16 +1749,15 @@ function connectToRtlTcp() {
 
             lpf1 = (lpf1 * (1.0 - targetAlpha)) + (rawAudio * targetAlpha);
             lpf2 = (lpf2 * (1.0 - targetAlpha)) + (lpf1 * targetAlpha);
-
             let audio = lpf2;
             audio = audioLPF.process(audio);
 
             // ==========================================
-            // 2. Noise Gate (Expander) - TUNED
-            // ==========================================
-            const defaultFloor = 10;
-            const noiseGateThresh = (squelchDB[currentFreq] || defaultFloor) + 2;
-            const signalLevel = avgRssi;
+            // 1. Noise Gate (Expander)
+            // 信号レベルが低い場合、ゲインを下げてノイズを抑制する
+            // クライアントから同期された閾値を使用する
+            const noiseGateThresh = currentSquelchThreshold;
+            const signalLevel = avgRssi; // RSSIを使用
             let gateGain = 1.0;
 
             if (signalLevel < noiseGateThresh) {
@@ -1743,16 +1767,15 @@ function connectToRtlTcp() {
             }
             audio *= gateGain;
 
+            // 3. Improved AGC - TUNED for High Input
             // ==========================================
-            // 3. Improved AGC - TUNED
-            // ==========================================
-            const attack = isFM ? 0.95 : 0.92; // アタックを少し遅くして自然に
-            const release = isFM ? 0.0025 : 0.004; // リリースを少し遅く
-            const maxGain = isFM ? 10.0 : 60.0; // 最大ゲインを100->60に制限（ノイズ持ち上げ防止）
+            const attack = isFM ? 0.95 : 0.92;
+            const release = isFM ? 0.0025 : 0.004;
+            const maxGain = isFM ? 10.0 : 40.0; // 最大ゲインをさらに下げる (60->40)
 
             const currentLevel = Math.abs(audio * agcGain);
 
-            if (currentLevel > 0.5) {
+            if (currentLevel > 0.4) { // ターゲットレベルを下げる (0.5 -> 0.4)
                 agcGain *= attack;
             } else {
                 // ゲートが開いている時のみゲインアップ
@@ -1766,10 +1789,11 @@ function connectToRtlTcp() {
             audio *= agcGain;
 
             // ==========================================
-            // 4. Compressor - TUNED
+            // 4. Compressor / Limiter - TUNED
             // ==========================================
-            const compThresh = 0.5; // 閾値を少し上げる
-            const compRatio = 3.0;  // 圧縮比を少し下げる (自然に)
+            // 空港デッキなど強電界地域での歪みを防ぐため、リミッター的に動作させる
+            const compThresh = 0.3; // 閾値を下げる (早めに圧縮開始)
+            const compRatio = 8.0;  // 圧縮比を上げる (リミッター動作)
 
             if (Math.abs(audio) > compThresh) {
                 const over = Math.abs(audio) - compThresh;
@@ -1778,8 +1802,12 @@ function connectToRtlTcp() {
                 audio = sign * (compThresh + compressed);
             }
 
-            // Makeup Gain
-            audio *= 1.3;
+            // Makeup Gain (歪み防止のため控えめに)
+            audio *= 1.1;
+
+            // Hard Limiter (絶対割れ防止)
+            if (audio > 0.95) audio = 0.95;
+            if (audio < -0.95) audio = -0.95;
 
             // ソフトクリッピング
             const k = 2.0;
