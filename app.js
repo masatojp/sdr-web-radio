@@ -1719,12 +1719,12 @@ function connectToRtlTcp() {
 
             // AGC
             const currentLevel = Math.abs(audio * agcGain);
-            if (currentLevel > 0.6) agcGain *= 0.98; // Attack: 強い信号に素早く反応
-            else agcGain += 0.0005; // Release: ゲインの回復を遅くしてノイズ上昇を抑制
+            if (currentLevel > 0.6) agcGain *= 0.98; // Attack: 強い信号に素早く反応 (変更なし)
+            else agcGain += 0.0008; // Release: ゲインの回復を少し速くする
 
-            const maxGain = isFM ? 10.0 : 40.0; // AMの最大ゲインを40に調整
+            const maxGain = isFM ? 10.0 : 80.0; // AMの最大ゲインを80に引き上げ
             if (agcGain > maxGain) agcGain = maxGain;
-            if (agcGain < 1.0) agcGain = 1.0; // 最小ゲインを1.0に設定
+            if (agcGain < 1.0) agcGain = 1.0;
             audio *= agcGain;
             
             // ソフトクリッピングを適用して、強い信号でも音が割れにくくする
