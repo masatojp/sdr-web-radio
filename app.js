@@ -832,7 +832,7 @@ const htmlContent = `
         els.modalCancel.addEventListener('click', () => {
             els.modalOverlay.style.display = "none";
             if (state.masterGain) {
-                state.masterGain.gain.setTargetAtTime(1.0, state.audioCtx.currentTime, 0.1);
+                state.masterGain.gain.setTargetAtTime(1.0, state.audioCtx.currentTime, 0.02);
             }
         });
 
@@ -924,14 +924,13 @@ const htmlContent = `
 
             if (state.noiseFloor === 0) state.noiseFloor = rssiPercent;
 
+            // ノイズフロアの追従ロジックを改善
             if (rssiPercent < state.noiseFloor) {
+                // 信号がフロアより弱い場合、フロアをゆっくり下げる
                 state.noiseFloor = state.noiseFloor * 0.9 + rssiPercent * 0.1;
-            } else {
-                if (!state.isSquelchOpen) {
-                    if (state.noiseFloor < rssiPercent) {
-                        state.noiseFloor += 0.005;
-                    }
-                }
+            } else if (!state.isSquelchOpen && rssiPercent < state.noiseFloor + 5) {
+                // スケルチが開いておらず、信号がフロアより少しだけ強い場合のみ、フロアをゆっくり上げる
+                state.noiseFloor += 0.005;
             }
 
             const thresholdPercent = state.noiseFloor + state.sqMargin;
@@ -1810,7 +1809,7 @@ function connectToRtlTcp() {
             } else {
                 // ゲートが開いている時のみゲインアップ
                 // (ゲート無効時は常にゲインアップ許可)
-                if (noiseGateThresh <= -40 || signalLevel > noiseGateThresh) {
+                if (noiseGateThresh <= -40 || signalLevel > noiseGateThresh - 5) { // 閾値より少し下でもゲイン回復を許可
                     agcGain += release;
                 }
             }
