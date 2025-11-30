@@ -1426,11 +1426,11 @@ function sendCmd(cmd, param) {
 
 function updateFilterBandwidth(mode) {
     if (mode === 'AM') {
-        const bw = 4000; // 航空無線の帯域に合わせてよりシャープに
+        const bw = 3000; // RF Bandwidth 6kHz (Audio +/- 3kHz)
         ifFilterI.calcCoeffs(CONFIG.sampleRate, bw, 0.707);
         ifFilterQ.calcCoeffs(CONFIG.sampleRate, bw, 0.707);
         console.log(`[DSP] Set IF Filter to Narrow AM (${bw}Hz, 4th Order)`);
-        audioLPF.calcCoeffs(ACTUAL_AUDIO_RATE, 3500, 0.707);
+        audioLPF.calcCoeffs(ACTUAL_AUDIO_RATE, 3000, 0.707);
         audioHPF.calcCoeffs(ACTUAL_AUDIO_RATE, 300, 0.707);
     } else {
         const bw = 100000;
