@@ -1392,11 +1392,11 @@ function sendCmd(cmd, param) {
 
 function updateFilterBandwidth(mode) {
     if (mode === 'AM') {
-        const bw = 5000;
+        const bw = 4000; // 航空無線の帯域に合わせてよりシャープに
         ifFilterI.calcCoeffs(CONFIG.sampleRate, bw, 0.707);
         ifFilterQ.calcCoeffs(CONFIG.sampleRate, bw, 0.707);
         console.log(`[DSP] Set IF Filter to Narrow AM (${bw}Hz, 4th Order)`);
-        audioLPF.calcCoeffs(ACTUAL_AUDIO_RATE, 4000, 0.707); // AM用にオーディオLPFを4kHzに設定
+        audioLPF.calcCoeffs(ACTUAL_AUDIO_RATE, 3500, 0.707); // AM用にオーディオLPFを3.5kHzに設定し、高域ノイズをカット
     } else {
         const bw = 100000;
         ifFilterI.calcCoeffs(CONFIG.sampleRate, bw, 0.707);
@@ -1404,6 +1404,7 @@ function updateFilterBandwidth(mode) {
         console.log(`[DSP] Set IF Filter to Wide FM (${bw}Hz)`);
     }
 }
+
 
 function tuneRadio(freq, mode) {
     console.log(`[Tuning] ${freq} Hz (${mode})`);
@@ -1434,7 +1435,7 @@ function setAttenuator(att) {
 }
 
 function broadcastStatus() {
-    const bwText = (currentMode === 'FM') ? "Wide (100kHz)" : "Sharp (5kHz)";
+    const bwText = (currentMode === 'FM') ? "Wide (100kHz)" : "Sharp (4kHz)";
 
     let savedFloor = null;
     if (squelchDB[currentFreq]) {
@@ -1710,11 +1711,17 @@ function connectToRtlTcp() {
             audio = audioLPF.process(audio); // 最終オーディオLPF
 
             // AGC
-            const currentLevel = Math.abs(audio * agcGain);
-            if (currentLevel > 0.5) agcGain *= 0.95; // Attack: 強い信号での音割れを防ぐ
-            else agcGain += 0.0025; // Release: 弱い信号に対してゲイン回復をさらに速くする
+            // AMモードではAGCの応答を高速化し、弱い信号を素早く持ち上げる
+            const attack = isFM ? 0.95 : 0.85; // AMのアタックを速くする
+            const release = isFM ? 0.0025 : 0.008; // AMのリリースを速くする
 
-            const maxGain = isFM ? 10.0 : 70.0; // AMの最大ゲインを70に調整（ノイズの過剰増幅を抑制）
+            const currentLevel = Math.abs(audio * agcGain);
+            if (currentLevel > 0.5) {
+                agcGain *= attack; // Attack: 強い信号での音割れを防ぐ
+            } else {
+                agcGain += release; // Release: 弱い信号に対してゲイン回復を速くする
+            }
+            const maxGain = isFM ? 10.0 : 80.0; // AMの最大ゲインを80に調整
             if (agcGain > maxGain) agcGain = maxGain;
             if (agcGain < 1.0) agcGain = 1.0;
             audio *= agcGain;
