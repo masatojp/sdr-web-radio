@@ -28,6 +28,7 @@ const CONFIG = {
 // デシメーション比率と、実際の音声レートを計算
 const DECIMATION = Math.floor(CONFIG.sampleRate / CONFIG.audioRate);
 const ACTUAL_AUDIO_RATE = CONFIG.sampleRate / DECIMATION;
+const OFFSET_FREQ = 64000; // Offset Tuning Frequency (Fs/4)
 
 let squelchDB = {};
 try {
@@ -1448,7 +1449,9 @@ function tuneRadio(freq, mode) {
     isTuning = true;
     resetDspState();
     updateFilterBandwidth(mode);
-    sendCmd(0x01, freq);
+    updateFilterBandwidth(mode);
+    // Offset Tuning: Tune 64kHz lower to avoid DC spike
+    sendCmd(0x01, freq - OFFSET_FREQ);
     currentFreq = freq;
     currentMode = mode;
     broadcastStatus();
@@ -1681,6 +1684,7 @@ function connectToRtlTcp() {
 
         let frameRssiSum = 0;
         let frameRssiCount = 0;
+        let mixIndex = 0; // For Fs/4 mixing
 
         for (let i = 0; i < processingLength; i += 2 * DECIMATION) {
             let sampleSum = 0, count = 0;
@@ -1690,11 +1694,23 @@ function connectToRtlTcp() {
                 const idx = i + (k * 2);
                 if (idx + 1 >= processingLength) break;
 
-                let I = rawData[idx] - 127.5;
-                let Q = rawData[idx + 1] - 127.5;
+                // Raw I/Q
+                let I_raw = rawData[idx] - 127.5;
+                let Q_raw = rawData[idx + 1] - 127.5;
 
-                const I_filt = ifFilterI.process(I);
-                const Q_filt = ifFilterQ.process(Q);
+                // Fs/4 Down-Conversion (Shift -64kHz)
+                // Sequence: (I,Q), (Q,-I), (-I,-Q), (-Q,I)
+                let I_mix, Q_mix;
+                switch (mixIndex & 3) {
+                    case 0: I_mix = I_raw; Q_mix = Q_raw; break;
+                    case 1: I_mix = Q_raw; Q_mix = -I_raw; break;
+                    case 2: I_mix = -I_raw; Q_mix = -Q_raw; break;
+                    case 3: I_mix = -Q_raw; Q_mix = I_raw; break;
+                }
+                mixIndex++;
+
+                const I_filt = ifFilterI.process(I_mix);
+                const Q_filt = ifFilterQ.process(Q_mix);
 
                 if (isFM) {
                     rssiSum += Math.sqrt(I_filt * I_filt + Q_filt * Q_filt);
