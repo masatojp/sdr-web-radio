@@ -1691,15 +1691,12 @@ function connectToRtlTcp() {
                     prevAngle = angle;
                     sampleSum += dAngle;
                 } else {
-                    // AM復調改善: DCオフセット除去とエンベロープ検波
-                    i_dc = (i_dc * 0.99) + (I_filt * 0.01);
-                    q_dc = (q_dc * 0.99) + (Q_filt * 0.01);
-                    const I_am = I_filt - i_dc;
-                    const Q_am = Q_filt - q_dc;
-
-                    const mag = Math.sqrt(I_am * I_am + Q_am * Q_am);
-                    rssiSum += Math.sqrt(I_filt * I_filt + Q_filt * Q_filt); // RSSIは補正前の値で計算
-                    sampleSum += mag; // 音声信号は補正後の値で生成
+                    // AM Demodulation: Envelope Detection
+                    // Calculate magnitude directly from filtered I/Q (includes carrier)
+                    // The DC component (carrier) will be removed by the DC blocking filter later
+                    const mag = Math.sqrt(I_filt * I_filt + Q_filt * Q_filt);
+                    rssiSum += mag;
+                    sampleSum += mag;
                 }
                 count++;
             }
@@ -1764,9 +1761,11 @@ function connectToRtlTcp() {
             // これにより、どんなに弱い信号(管制塔)でも強制的に聞けるようにする
             if (noiseGateThresh > -40) {
                 if (signalLevel < noiseGateThresh) {
-                    // 線形減衰だが、フロアを少し下げる (0.3 -> 0.15)
+                    // 線形減衰。フロアを0にする (完全にミュート)
                     // ノイズ感低減のため
-                    gateGain = Math.max(0.15, signalLevel / noiseGateThresh);
+                    gateGain = Math.max(0.0, signalLevel / noiseGateThresh);
+                    // カーブを急にする (2乗)
+                    gateGain = gateGain * gateGain;
                 }
             }
             audio *= gateGain;
@@ -1793,7 +1792,7 @@ function connectToRtlTcp() {
 
             // CRITICAL FIX: AGCが信号を減衰させることを許可する
             // 以前は 1.0 でクリップしていたため、入力が大きすぎると歪んでいた
-            if (agcGain < 0.1) agcGain = 0.1;
+            if (agcGain < 0.01) agcGain = 0.01;
 
             audio *= agcGain;
 
