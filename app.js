@@ -14,8 +14,8 @@ const CONFIG = {
     rtlPort: 1234,
     webPort: 3000,
     // 初期設定
-    frequency: 93500000,
-    mode: 'FM',
+    frequency: 128800000, // Default to Airband for testing
+    mode: 'AM',
     // RTL-SDRのサンプリングレート (256k - Integer Decimation for 16k)
     sampleRate: 256000,
     // 目標とする音声レート
@@ -62,7 +62,7 @@ if (!fs.existsSync(CONFIG.recordingsPath)) {
     fs.mkdirSync(CONFIG.recordingsPath);
 }
 
-console.log(`[System] Starting Web SDR Monitor (Android Background Fix)...`);
+console.log(`[System] Starting Web SDR Monitor (AM Optimized)...`);
 console.log(`[Init] RF: ${CONFIG.frequency}Hz`);
 console.log(`[Audio] Decimation: 1/${DECIMATION}, Rate: ${ACTUAL_AUDIO_RATE.toFixed(2)}Hz`);
 
@@ -716,7 +716,7 @@ const htmlContent = `
                         }
                     };
                 }
-                 
+                  
                 await state.audioCtx.resume();
 
                 if (!state.masterGain) {
@@ -1735,10 +1735,17 @@ function connectToRtlTcp() {
             }
             if (count === 0) continue;
 
-            const val = sampleSum / count;
+            let val = sampleSum / count;
             const avgRssi = rssiSum / count;
             frameRssiSum += avgRssi;
             frameRssiCount++;
+
+            // ==========================================
+            // AM Pre-Gain (Boost weak AM signals immediately)
+            // ==========================================
+            if (!isFM) {
+                val *= 2.0; // AM信号を予めブーストしてS/N感を稼ぐ
+            }
 
             // ==========================================
             // 1. High Pass Filter (HPF)
@@ -1764,9 +1771,11 @@ function connectToRtlTcp() {
                 // strength 30-80: alpha 0.02 - 0.3 (遷移域)
                 // strength 80+: alpha 0.45 (クリア)
                 if (strength < 30) {
-                    targetAlpha = 0.02 + (strength / 30) * 0.05;
+                    // AM FIX: 弱入力時でもフィルタを閉じすぎない (0.02 -> 0.1)
+                    // 管制塔の声はノイズに埋もれがちなので、こもらせると聞き取れない
+                    targetAlpha = 0.1 + (strength / 30) * 0.05;
                 } else {
-                    targetAlpha = 0.07 + ((strength - 30) / 70) * 0.38;
+                    targetAlpha = 0.15 + ((strength - 30) / 70) * 0.30;
                 }
             }
 
@@ -1783,24 +1792,30 @@ function connectToRtlTcp() {
             const signalLevel = avgRssi; // RSSIを使用
             let gateGain = 1.0;
 
-            // 緊急対応: スケルチ設定が極端に低い(-40以下)場合はゲートを無効化(常時オープン)
-            // これにより、どんなに弱い信号(管制塔)でも強制的に聞けるようにする
-            if (noiseGateThresh > -40) {
-                if (signalLevel < noiseGateThresh) {
-                    // 線形減衰。フロアを0にする (完全にミュート)
-                    // ノイズ感低減のため
-                    gateGain = Math.max(0.0, signalLevel / noiseGateThresh);
-                    // カーブを急にする (2乗)
-                    gateGain = gateGain * gateGain;
+            // AM FIX: AMモードではノイズゲートを基本的にバイパスまたは極めて弱くする
+            // 微弱な管制塔の信号がゲートで切れるのを防ぐため
+            if (isFM) {
+                // 緊急対応: スケルチ設定が極端に低い(-40以下)場合はゲートを無効化(常時オープン)
+                if (noiseGateThresh > -40) {
+                    if (signalLevel < noiseGateThresh) {
+                        // 線形減衰。フロアを0にする (完全にミュート)
+                        gateGain = Math.max(0.0, signalLevel / noiseGateThresh);
+                        // カーブを急にする (2乗)
+                        gateGain = gateGain * gateGain;
+                    }
                 }
+                audio *= gateGain;
             }
-            audio *= gateGain;
 
-            // 3. Improved AGC - TUNED for High Input
+            // 3. Improved AGC - TUNED for High Input & Weak AM Signals
             // ==========================================
-            const attack = isFM ? 0.95 : 0.92;
-            const release = isFM ? 0.0025 : 0.004;
-            const maxGain = isFM ? 10.0 : 20.0; // 最大ゲインを制限 (40 -> 20)
+            // AM FIX: Attack/ReleaseをAM専用に調整
+            // FM: Attack 0.95, Release 0.0025
+            // AM: Attack 0.98 (突発ノイズ無視), Release 0.08 (高速回復)
+            const attack = isFM ? 0.95 : 0.98;
+            // AM時は、強い信号(飛行機)の直後の弱い信号(管制)を拾うため、リリースを高速にする
+            const release = isFM ? 0.0025 : 0.08; 
+            const maxGain = isFM ? 10.0 : 50.0; // AMは最大ゲインを大きくして微弱信号を持ち上げる
 
             const currentLevel = Math.abs(audio * agcGain);
 
@@ -1808,8 +1823,8 @@ function connectToRtlTcp() {
                 agcGain *= attack;
             } else {
                 // ゲートが開いている時のみゲインアップ
-                // (ゲート無効時は常にゲインアップ許可)
-                if (noiseGateThresh <= -40 || signalLevel > noiseGateThresh - 5) { // 閾値より少し下でもゲイン回復を許可
+                // AMはゲートがないので常に回復
+                if (!isFM || noiseGateThresh <= -40 || signalLevel > noiseGateThresh - 5) { 
                     agcGain += release;
                 }
             }
