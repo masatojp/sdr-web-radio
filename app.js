@@ -1700,7 +1700,7 @@ function connectToRtlTcp() {
             if (!isFM) {
                 // 信号が弱いほどLPFを強くかける (alphaを小さくしてノイズをカット)
                 const strength = Math.min(100, Math.max(0, avgRssi));
-                targetAlpha = 0.08 + (strength / 100) * 0.37; // 0.08 (強ノイズ) から 0.45 (クリア) の範囲で変動
+                targetAlpha = 0.05 + (strength / 100) * 0.40; // 0.05 (超強ノイズ) から 0.45 (クリア) の範囲で変動。弱い信号でより強くフィルタリング
             }
 
             lpf1 = (lpf1 * (1.0 - targetAlpha)) + (rawAudio * targetAlpha);
@@ -1711,10 +1711,10 @@ function connectToRtlTcp() {
 
             // AGC
             const currentLevel = Math.abs(audio * agcGain);
-            if (currentLevel > 0.5) agcGain *= 0.95; // Attack: 閾値を下げ、より素早く反応して音割れを防ぐ
-            else agcGain += 0.0015; // Release: 弱い信号に対してゲイン回復を速くする
+            if (currentLevel > 0.5) agcGain *= 0.95; // Attack: 強い信号での音割れを防ぐ
+            else agcGain += 0.0025; // Release: 弱い信号に対してゲイン回復をさらに速くする
 
-            const maxGain = isFM ? 10.0 : 80.0; // AMの最大ゲインを80に調整（音割れ防止）
+            const maxGain = isFM ? 10.0 : 70.0; // AMの最大ゲインを70に調整（ノイズの過剰増幅を抑制）
             if (agcGain > maxGain) agcGain = maxGain;
             if (agcGain < 1.0) agcGain = 1.0;
             audio *= agcGain;
